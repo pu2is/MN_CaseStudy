@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# dbt
+target/
+dbt_packages/
+logs/
+.user.yml
+
+# Secrets / credentials
+.env
+.env.*
+*.env
+service-account*.json
+*-service-account.json
+credentials.json
+*.key.json
+*.pem
+*_token*
