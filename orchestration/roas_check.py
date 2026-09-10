@@ -51,7 +51,9 @@ def evaluate_roas(
     )
     revenue_valid = revenue is not None and math.isfinite(revenue) and revenue >= 0
     ad_spend_valid = ad_spend is None or (math.isfinite(ad_spend) and ad_spend >= 0)
-    has_invalid_source_rows = (invalid_meta_rows or 0) > 0 or (invalid_shopify_revenue_rows or 0) > 0
+    has_invalid_source_rows = (invalid_meta_rows or 0) > 0 or (
+        invalid_shopify_revenue_rows or 0
+    ) > 0
     if row.get("date") != target_date or not revenue_valid or not ad_spend_valid:
         status = RoasStatus.DATA_UNAVAILABLE
     elif ad_spend is None:
