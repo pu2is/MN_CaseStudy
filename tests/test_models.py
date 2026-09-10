@@ -135,10 +135,30 @@ def test_invalid_amounts_are_flagged_and_excluded_from_revenue_not_dropped(wareh
     ).fetchone()
     assert row[0] is None or row[0] < 0  # kept visible, not silently zeroed
     assert row[1] is True
-    revenue = warehouse.execute(
-        "select revenue from int_shopify_daily where date = '2026-09-01'"
-    ).fetchone()[0]
+    revenue, invalid_revenue_rows = warehouse.execute(
+        "select revenue, invalid_revenue_rows from int_shopify_daily where date = '2026-09-01'"
+    ).fetchone()
     assert revenue == 0  # excluded from revenue; the order still counts (see orders column)
+    assert invalid_revenue_rows == 1
+
+
+def test_invalid_source_rows_propagate_to_the_mart(warehouse):
+    """Excluded rows must be visible downstream, not just silently dropped
+    from the sums -- the mart needs to tell a partial day from a complete one."""
+    warehouse.execute("""
+        insert into src_shopify_orders values
+        ('1', '2026-09-01 12:00:00+00', 100, 'c', null),
+        ('2', '2026-09-01 12:00:00+00', -1, 'd', null);
+        insert into src_meta_insights values
+        ('2026-09-01', 'a', 50, 100, 10),
+        ('2026-09-01', 'b', -1, 100, 10);
+    """)
+    execute_models(warehouse)
+    row = warehouse.execute("""
+        select invalid_shopify_revenue_rows, invalid_meta_rows
+        from fct_marketing_performance where date = '2026-09-01'
+    """).fetchone()
+    assert row == (1, 1)
 
 
 def test_unidentifiable_or_undated_rows_do_not_block_other_dates(warehouse):
