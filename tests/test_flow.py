@@ -85,6 +85,18 @@ def test_zero_spend_is_success_without_alert(services):
     post.assert_not_called()
 
 
+def test_missing_meta_data_sends_operational_alert_and_fails(services):
+    """No Meta row for the date (ad_spend is null, not 0) can't be told apart
+    from a failed ingestion, so it must fail the flow like other unavailable
+    data rather than being read as a quiet zero-spend day."""
+    _, fetch, post = services
+    fetch.return_value = {"date": TARGET, "roas": None, "revenue": 100, "ad_spend": None}
+    with pytest.raises(RuntimeError, match="unavailable"):
+        check_roas_and_alert_flow()
+    post.assert_called_once()
+    assert "pipeline failure" in post.call_args.kwargs["json"]["text"]
+
+
 def test_repeated_runs_query_fresh_data(services):
     _, fetch, post = services
     fetch.side_effect = [

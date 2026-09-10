@@ -33,9 +33,11 @@ def evaluate_roas(
 ) -> RoasCheckResult:
     """Classify a fct_marketing_performance row against the ROAS threshold.
 
-    Missing or invalid metrics are DATA_UNAVAILABLE. A zero-spend day, or one
-    with no Meta data at all (ad_spend is null after the left join), has
-    undefined ROAS and is NO_SPEND, not a data-quality failure.
+    Missing or invalid metrics are DATA_UNAVAILABLE. No Meta data at all for
+    the date (ad_spend is null after the left join) is also DATA_UNAVAILABLE,
+    since there is no way to tell a successful empty load from an ingestion
+    failure. An explicit zero-spend day has undefined ROAS and is NO_SPEND,
+    not a data-quality failure.
     """
     if not math.isfinite(threshold) or threshold < 0:
         raise ValueError("threshold must be finite and non-negative")
@@ -45,7 +47,9 @@ def evaluate_roas(
     ad_spend_valid = ad_spend is None or (math.isfinite(ad_spend) and ad_spend >= 0)
     if row.get("date") != target_date or not revenue_valid or not ad_spend_valid:
         status = RoasStatus.DATA_UNAVAILABLE
-    elif ad_spend is None or ad_spend == 0:
+    elif ad_spend is None:
+        status = RoasStatus.DATA_UNAVAILABLE
+    elif ad_spend == 0:
         status = RoasStatus.NO_SPEND
     elif roas is None or not math.isfinite(roas) or roas < 0:
         status = RoasStatus.DATA_UNAVAILABLE

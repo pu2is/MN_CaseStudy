@@ -4,7 +4,7 @@ models:
     description: One row per calendar date between the earliest and latest observed source dates.
       Daily Shopify revenue / Meta spend and Meta spend / all new Shopify customers are blended proxies,
       not attributed campaign metrics. Missing source data stays null, including dates missing from
-      both sources. See docs/data_contract.md.
+      both sources.
     columns:
       - name: date
         description: Calendar date. Grain of this model.

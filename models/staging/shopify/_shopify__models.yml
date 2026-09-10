@@ -25,7 +25,7 @@ models:
       - name: total_price
         description: Gross order value in EUR (assumed store currency), as sent by the source. See
           total_price_is_invalid to identify rows excluded from revenue. Refunds require a separate
-          source; see docs/data_contract.md.
+          source
         data_tests:
           - non_negative:
               config:

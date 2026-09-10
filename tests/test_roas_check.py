@@ -75,13 +75,24 @@ def test_wrong_day_is_unavailable():
     assert evaluate_roas(row, TARGET_DATE, THRESHOLD).status is RoasStatus.DATA_UNAVAILABLE
 
 
-def test_no_meta_data_for_the_date_is_no_spend_not_unavailable():
-    """ad_spend is null (not 0) when int_meta_daily has no row for this date --
-    a paused-ads day, not a data-quality problem."""
+def test_missing_meta_data_is_unavailable():
+    """ad_spend is null when int_meta_daily has no row for this date -- with no
+    separate load-completion status, this can't be told apart from a failed
+    Meta ingestion, so it must not be read as a normal zero-spend day."""
     row = {"date": TARGET_DATE, "roas": None, "revenue": 500.0, "ad_spend": None}
+
+    result = evaluate_roas(row, TARGET_DATE, THRESHOLD)
+
+    assert result.status is RoasStatus.DATA_UNAVAILABLE
+    assert result.revenue == 500.0
+    assert result.ad_spend is None
+
+
+def test_explicit_zero_spend_is_no_spend():
+    row = {"date": TARGET_DATE, "roas": None, "revenue": 500.0, "ad_spend": 0.0}
 
     result = evaluate_roas(row, TARGET_DATE, THRESHOLD)
 
     assert result.status is RoasStatus.NO_SPEND
     assert result.revenue == 500.0
-    assert result.ad_spend is None
+    assert result.ad_spend == 0.0
