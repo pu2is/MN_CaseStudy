@@ -12,7 +12,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from prefect.testing.utilities import prefect_test_harness
 
-from orchestration.flow import check_roas_and_alert_flow
+from orchestration.flow import (
+    check_roas_and_alert_flow,
+    send_roas_alert,
+    validate_slack_webhook_url,
+)
 from orchestration.roas_check import RoasStatus
 
 
@@ -73,3 +77,33 @@ def test_null_roas_sends_no_misleading_alert(mock_fetch, mock_client, mock_post)
 
     assert result.status is RoasStatus.DATA_UNAVAILABLE
     mock_post.assert_not_called()
+
+
+@patch("orchestration.slack.httpx.post")
+@patch("orchestration.flow.bigquery.Client")
+@patch("orchestration.flow.fetch_fct_marketing_performance_row")
+def test_missing_slack_webhook_fails_flow_immediately(
+    mock_fetch, mock_client, mock_post, monkeypatch
+):
+    """Issue 12, case 1: a missing SLACK_WEBHOOK_URL is a permanent
+    configuration error -- it must fail the flow immediately, without going
+    through send_roas_alert's retried HTTP call at all."""
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    mock_fetch.return_value = _row_for(1.2)
+
+    with pytest.raises(RuntimeError, match="SLACK_WEBHOOK_URL"):
+        check_roas_and_alert_flow()
+
+    mock_post.assert_not_called()
+
+
+def test_validate_slack_webhook_url_task_has_no_retries():
+    """Issue 12: configuration validation must not be retried -- retrying a
+    permanent error only delays the inevitable failure."""
+    assert validate_slack_webhook_url.retries == 0
+
+
+def test_send_roas_alert_task_keeps_retries_for_transient_failures():
+    """Issue 12, case 2: once configuration is valid, transient HTTP/network
+    failures sending to Slack must still be retried."""
+    assert send_roas_alert.retries == 3

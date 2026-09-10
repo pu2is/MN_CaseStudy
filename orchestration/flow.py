@@ -3,12 +3,14 @@
 Conceptual production flow:
 
     ingest_shopify -> ingest_meta -> run_dbt -> run_dbt_tests
-        -> check_yesterday_roas -> send_slack_alert
+        -> check_yesterday_roas -> validate_slack_webhook_url -> send_slack_alert
 
 Ingestion is out of scope for this case study (assumed already complete), so
 this flow starts at run_dbt. Retries are attached to every task that talks to
 an external system (BigQuery, Slack, or a dbt subprocess hitting BigQuery),
-not to the pure classification logic in roas_check.evaluate_roas.
+not to the pure classification logic in roas_check.evaluate_roas or to
+validate_slack_webhook_url, whose config error is permanent and never worth
+retrying.
 """
 
 from __future__ import annotations
@@ -70,11 +72,26 @@ def check_yesterday_roas() -> RoasCheckResult:
     return evaluate_roas(row, yesterday, settings.roas_alert_threshold)
 
 
-@task(retries=3, retry_delay_seconds=[10, 30, 60])
-def send_roas_alert(result: RoasCheckResult) -> None:
+@task
+def validate_slack_webhook_url() -> str:
+    """Fail fast on missing Slack configuration.
+
+    A missing SLACK_WEBHOOK_URL is a permanent configuration error, not a
+    transient failure -- retrying it would just delay an inevitable failure.
+    This task deliberately has no retries so the flow fails immediately,
+    while send_roas_alert's HTTP call keeps its own retries for genuinely
+    transient delivery failures.
+    """
     settings = load_settings()
+    if not settings.slack_webhook_url:
+        raise RuntimeError("SLACK_WEBHOOK_URL is not set -- cannot send ROAS alert.")
+    return settings.slack_webhook_url
+
+
+@task(retries=3, retry_delay_seconds=[10, 30, 60])
+def send_roas_alert(webhook_url: str, result: RoasCheckResult) -> None:
     payload = build_slack_payload(result)
-    send_slack_alert(settings.slack_webhook_url, payload)
+    send_slack_alert(webhook_url, payload)
 
 
 @flow(name="check-roas-and-alert")
@@ -93,7 +110,8 @@ def check_roas_and_alert_flow() -> RoasCheckResult:
             result.date,
             result.threshold,
         )
-        send_roas_alert(result)
+        webhook_url = validate_slack_webhook_url()
+        send_roas_alert(webhook_url, result)
     elif result.status is RoasStatus.DATA_UNAVAILABLE:
         logger.warning(
             "ROAS unavailable for %s -- treating as a data-quality issue, not a "
