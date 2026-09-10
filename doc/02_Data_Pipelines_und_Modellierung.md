@@ -57,7 +57,7 @@ Negative oder nicht interpretierbare `total_price`-Werte bleiben sichtbar und we
 
 ## 2.5 Fehlende Daten und Nullteiler
 
-Das finale Modell erzeugt innerhalb des beobachteten Datumsbereichs eine Date Spine. Fehlt an einem Tag eine Quelle, bleiben deren Kennzahlen `NULL`. Fehlende Rows bedeuten nicht automatisch null Bestellungen oder null Werbeausgaben; sie können auch auf eine unvollständige Ingestion hinweisen. Im Produktivbetrieb sollte deshalb ein separater Load-Completion-Status die Vollständigkeit je Quelle und Berichtstag bestätigen.
+Das finale Modell erzeugt innerhalb des beobachteten Datumsbereichs eine Date Spine. Fehlt an einem Tag eine Quelle, bleiben deren Kennzahlen `NULL`. Fehlende Rows bedeuten nicht automatisch null Bestellungen oder null Werbeausgaben, sie können auch auf eine unvollständige Ingestion hinweisen. Im Produktivbetrieb sollte deshalb ein separater Load-Completion-Status die Vollständigkeit je Quelle und Berichtstag bestätigen.
 
 `SAFE_DIVIDE` verhindert Fehler bei Nullteilern. Bei Spend 0 oder unbekannt ist ROAS `NULL`. Bei 0 New Customers ist CAC `NULL`. Bei Spend 0 und positiven New Customers ergibt CAC 0.
 

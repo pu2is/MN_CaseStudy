@@ -6,7 +6,7 @@ Die vollständige Architektur ist in [`01_Architekturdiagramm.drawio`](01_Archit
 
 Shopify- und Meta-Daten werden mit dlt nach BigQuery geladen. dbt übernimmt die Transformation von Raw Data über Staging- und Intermediate-Modelle bis zum Marketing-Mart. Das finale Modell `fct_marketing_performance` wird für Reporting und Automatisierungen verwendet.
 
-In der Zielarchitektur laufen Prefect Server, Worker und PostgreSQL per Docker Compose auf einer Hetzner Cloud VM. Der Worker kann dlt-, dbt- und Python-Tasks ausführen. In diesem Repository sind dbt sowie die ROAS-Prüfung und Slack-Benachrichtigung implementiert; die Ingestion über dlt ist Teil der vorgeschlagenen Zielarchitektur. Speicherung und SQL-Verarbeitung liegen in BigQuery.
+In der Zielarchitektur laufen Prefect Server, Worker und PostgreSQL per Docker Compose auf einer Hetzner Cloud VM. Der Worker kann dlt-, dbt- und Python-Tasks ausführen. In diesem Repository sind dbt sowie die ROAS-Prüfung und Slack-Benachrichtigung implementiert, die Ingestion über dlt ist Teil der vorgeschlagenen Zielarchitektur. Speicherung und SQL-Verarbeitung liegen in BigQuery.
 
 Eine spätere LLM-Analyse baut auf validierten Marketing-Daten auf. CAC und ROAS bleiben deterministisch berechnet.
 
