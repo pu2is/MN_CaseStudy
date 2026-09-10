@@ -8,6 +8,16 @@ with source as (
 renamed as (
 
     select
+        -- Assumption: this is already a calendar date in the reporting
+        -- timezone (the `reporting_timezone` dbt var / REPORTING_TIMEZONE --
+        -- see dbt_project.yml and orchestration/settings.py), i.e. the Meta
+        -- ad account's own timezone setting matches it. Unlike
+        -- stg_shopify_orders.order_date, there is no UTC timestamp here to
+        -- convert -- Meta's Insights API reports a plain date already
+        -- bucketed by the account's configured timezone. If the real ad
+        -- account is ever configured with a different timezone, its dates
+        -- must be normalized to reporting_timezone before this join is
+        -- trustworthy at a daily grain.
         safe_cast(date as date) as date,
         nullif(cast(campaign_id as string), '') as campaign_id,
         safe_cast(spend as float64) as spend_raw,

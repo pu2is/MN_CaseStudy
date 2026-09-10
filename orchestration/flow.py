@@ -13,9 +13,10 @@ not to the pure classification logic in roas_check.evaluate_roas.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 from google.cloud import bigquery
@@ -27,7 +28,7 @@ from orchestration.roas_check import (
     evaluate_roas,
     fetch_fct_marketing_performance_row,
 )
-from orchestration.settings import load_settings
+from orchestration.settings import load_settings, reporting_today
 from orchestration.slack import build_slack_payload, send_slack_alert
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -38,20 +39,29 @@ def _run_dbt_command(*args: str) -> None:
     subprocess.run(["uv", "run", "dbt", *args], cwd=REPO_ROOT, env=env, check=True)
 
 
+def _dbt_vars_args(settings) -> tuple[str, str]:
+    # Forwards the same reporting timezone Python uses for "yesterday" into
+    # dbt's order_date calculation, so the two never drift -- see
+    # orchestration/settings.py's module docstring.
+    return ("--vars", json.dumps({"reporting_timezone": settings.reporting_timezone}))
+
+
 @task(retries=1, retry_delay_seconds=30)
 def run_dbt() -> None:
-    _run_dbt_command("run")
+    settings = load_settings()
+    _run_dbt_command("run", *_dbt_vars_args(settings))
 
 
 @task(retries=1, retry_delay_seconds=30)
 def run_dbt_tests() -> None:
-    _run_dbt_command("test")
+    settings = load_settings()
+    _run_dbt_command("test", *_dbt_vars_args(settings))
 
 
 @task(retries=3, retry_delay_seconds=[10, 30, 60])
 def check_yesterday_roas() -> RoasCheckResult:
     settings = load_settings()
-    yesterday = date.today() - timedelta(days=1)
+    yesterday = reporting_today(settings) - timedelta(days=1)
 
     client = bigquery.Client(project=settings.bigquery_project)
     row = fetch_fct_marketing_performance_row(

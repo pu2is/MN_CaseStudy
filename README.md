@@ -46,6 +46,13 @@ Additional environment variables beyond the BigQuery ones above:
 - `ROAS_ALERT_THRESHOLD` — defaults to `1.5`.
 - `BIGQUERY_MARTS_DATASET` — defaults to `<BIGQUERY_DATASET>_marts`, matching dbt's
   default schema naming for the `marts` custom schema.
+- `REPORTING_TIMEZONE` — defaults to `Europe/Berlin`. The single reporting-timezone
+  policy shared by the Prefect flow's "yesterday" calculation and dbt's `order_date`
+  derivation in `stg_shopify_orders` (forwarded to every `dbt` invocation via
+  `--vars`, so it never drifts from the `reporting_timezone` default in
+  `dbt_project.yml`). Also documents the assumed Meta ad account timezone — see
+  `models/staging/meta/stg_meta_insights.sql`. If a real Meta ad account uses a
+  different timezone, its dates must be normalized to this one before joining.
 
 Run the automated tests (BigQuery and the Slack webhook call are both mocked) with:
 

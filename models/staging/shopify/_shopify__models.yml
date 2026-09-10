@@ -25,8 +25,12 @@ models:
           - not_null
       - name: order_date
         description: >
-          Calendar date of created_at, in UTC. May not align with Meta's
-          reporting date if the ad account uses a different timezone.
+          Calendar date of created_at, converted using the `reporting_timezone`
+          dbt var (see dbt_project.yml and orchestration/settings.py's
+          REPORTING_TIMEZONE), not implicit UTC. This is the same policy
+          assumed for Meta's reporting date -- see stg_meta_insights.date --
+          so the two only align if the real Meta ad account is normalized to
+          this timezone.
         data_tests:
           - not_null
       - name: total_price

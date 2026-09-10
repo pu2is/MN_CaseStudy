@@ -13,7 +13,16 @@ models:
           column_name: "concat(cast(date as string), '-', campaign_id)"
     columns:
       - name: date
-        description: Reporting date. Part of this model's grain.
+        description: >
+          Reporting date, as sent by the source. Part of this model's grain.
+          Assumed to already be a calendar date in the shared reporting
+          timezone (the `reporting_timezone` dbt var -- see
+          dbt_project.yml and orchestration/settings.py's
+          REPORTING_TIMEZONE), i.e. that the Meta ad account's own timezone
+          setting matches it. If the real ad account is ever configured with
+          a different timezone, its dates must be normalized to
+          reporting_timezone before joining with Shopify's order_date (see
+          stg_shopify_orders.order_date) at a daily grain.
         data_tests:
           - not_null
       - name: campaign_id

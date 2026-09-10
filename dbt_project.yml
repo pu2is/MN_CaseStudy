@@ -15,6 +15,17 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+vars:
+  # Single reporting-timezone policy, shared with the Prefect flow's
+  # REPORTING_TIMEZONE env var (see orchestration/settings.py). The flow
+  # forwards its value here via `dbt --vars` on every invocation, so this
+  # default is only used when a developer runs dbt directly -- keep it equal
+  # to Settings.reporting_timezone's default so the two never silently
+  # disagree. Used by stg_shopify_orders to convert order timestamps into a
+  # calendar order_date, and documented as the assumed Meta ad account
+  # calendar in stg_meta_insights.
+  reporting_timezone: "Europe/Berlin"
+
 models:
   mellow_noir_case_study:
     staging:

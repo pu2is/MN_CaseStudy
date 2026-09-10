@@ -14,11 +14,7 @@ renamed as (
         nullif(cast(discount_code as string), '') as discount_code,
 
         -- Assumption: created_at arrives already normalized to UTC by the
-        -- ingestion tool. Meta's src_meta_insights.date is a plain calendar
-        -- date in the ad account's reporting timezone, so downstream joins
-        -- between order_date and Meta's date are only exact if the store and
-        -- ad account share one timezone -- a mock-data simplification that a
-        -- real integration would need to confirm with the business.
+        -- ingestion tool.
         safe_cast(created_at as timestamp) as created_at,
 
         safe_cast(total_price as float64) as total_price_raw
@@ -34,7 +30,16 @@ cleaned as (
         customer_id,
         discount_code,
         created_at,
-        date(created_at) as order_date,
+
+        -- Calendar date in the shared reporting timezone (see the
+        -- `reporting_timezone` var in dbt_project.yml and
+        -- orchestration/settings.py's REPORTING_TIMEZONE), not implicit UTC,
+        -- so order_date, the Prefect alert's "yesterday", and Meta's
+        -- reporting date (see stg_meta_insights.sql) all agree on which
+        -- business day an event belongs to. If the real Meta ad account uses
+        -- a different timezone in production, its dates must be normalized
+        -- to this same reporting_timezone before joining.
+        date(created_at, '{{ var("reporting_timezone") }}') as order_date,
 
         -- staging keeps the original value even when it looks invalid (e.g. a
         -- negative total_price); total_price_is_invalid flags it so downstream
