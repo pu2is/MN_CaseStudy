@@ -1,0 +1,24 @@
+version: 2
+
+sources:
+  - name: shopify
+    description: >
+      Raw Shopify order data loaded daily by the ingestion tool (dlt), landing
+      as-is in BigQuery before any dbt transformation.
+    schema: "{{ env_var('BIGQUERY_DATASET', 'mellow_noir') }}"
+    tables:
+      - name: src_shopify_orders
+        description: >
+          One row per order as ingested from the Shopify API. No cleaning has
+          been applied yet -- see stg_shopify_orders for the cleaned version.
+        columns:
+          - name: order_id
+            description: Shopify order identifier.
+          - name: created_at
+            description: Order creation timestamp, as returned by the Shopify API.
+          - name: total_price
+            description: Order value, in the store's currency.
+          - name: customer_id
+            description: Shopify customer identifier.
+          - name: discount_code
+            description: Discount code applied to the order, if any.

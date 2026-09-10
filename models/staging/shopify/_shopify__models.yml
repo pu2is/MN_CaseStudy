@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: stg_shopify_orders
+    description: >
+      One row per Shopify order. Normalizes types and timestamps, extracts a
+      calendar order_date, blanks out empty strings, drops rows that cannot be
+      identified or dated, deduplicates by order_id, and flags (without
+      changing or dropping) orders with a negative total_price. Contains no
+      CAC/ROAS or other cross-source business logic -- see marts/marketing for
+      that.
+    columns:
+      - name: order_id
+        description: Shopify order identifier. Grain of this model.
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: >
+          Shopify customer identifier. Null for guest/anonymous checkouts or
+          when missing from the source.
+      - name: created_at
+        description: Order creation timestamp, assumed to already be UTC.
+        data_tests:
+          - not_null
+      - name: order_date
+        description: >
+          Calendar date of created_at, in UTC. May not align with Meta's
+          reporting date if the ad account uses a different timezone.
+        data_tests:
+          - not_null
+      - name: total_price
+        description: >
+          Order value, as sent by the source (including negative values, if
+          any) -- see total_price_is_invalid to identify those.
+      - name: total_price_is_invalid
+        description: True when total_price is a negative number.
+        data_tests:
+          - not_null
+      - name: discount_code
+        description: Discount code applied to the order. Null when absent or blank.

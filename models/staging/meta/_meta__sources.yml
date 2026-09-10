@@ -1,0 +1,25 @@
+version: 2
+
+sources:
+  - name: meta
+    description: >
+      Raw Meta Ads daily campaign insights loaded daily by the ingestion tool
+      (dlt), landing as-is in BigQuery before any dbt transformation.
+    schema: "{{ env_var('BIGQUERY_DATASET', 'mellow_noir') }}"
+    tables:
+      - name: src_meta_insights
+        description: >
+          One row per date/campaign combination as ingested from the Meta
+          Marketing API. No cleaning has been applied yet -- see
+          stg_meta_insights for the cleaned version.
+        columns:
+          - name: date
+            description: Reporting date for the campaign insight.
+          - name: campaign_id
+            description: Meta campaign identifier.
+          - name: spend
+            description: Ad spend for the campaign on this date, in EUR.
+          - name: impressions
+            description: Number of ad impressions on this date.
+          - name: clicks
+            description: Number of ad clicks on this date.
