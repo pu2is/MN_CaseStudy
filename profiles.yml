@@ -5,10 +5,10 @@
 #   - `dbt <command> --profiles-dir .`
 #
 # `dev` uses your local `gcloud auth application-default login` credentials.
-# `ci`/`prod` authenticate via a service-account keyfile whose *path* (never
+# `ci` authenticates via a service-account keyfile whose *path* (never
 # its contents) is supplied through the GOOGLE_APPLICATION_CREDENTIALS env var.
 mellow_noir_case_study:
-  target: dev
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
   outputs:
     dev:
       type: bigquery
