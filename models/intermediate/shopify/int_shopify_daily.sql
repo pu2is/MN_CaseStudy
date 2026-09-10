@@ -1,6 +1,8 @@
 select
     orders.order_date as date,
-    sum(orders.total_price) as revenue,
+    -- Orders flagged with an invalid (negative or unknown) total_price are
+    -- excluded from revenue; the order itself still counts below.
+    sum(case when not orders.total_price_is_invalid then orders.total_price else 0 end) as revenue,
     count(*) as orders,
     -- Multiple first-day orders still represent one new customer.
     count(distinct case

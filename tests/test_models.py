@@ -105,29 +105,59 @@ def test_missing_sources_calendar_gaps_and_zero_denominators(warehouse):
     ]
 
 
-def test_conflicting_versions_remain_visible_to_uniqueness_tests(warehouse):
+def test_conflicting_versions_keep_one_deterministic_row(warehouse):
+    """Conflicting snapshots must not double-count revenue/spend -- Shopify
+    keeps the latest by created_at, Meta keeps the highest-spend version."""
     warehouse.execute("""
         insert into src_shopify_orders values
         ('1', '2026-09-01 12:00:00+00', 100, 'c', null),
-        ('1', '2026-09-01 12:00:00+00', 80, 'c', null);
+        ('1', '2026-09-02 12:00:00+00', 80, 'c', null);
         insert into src_meta_insights values
         ('2026-09-01', 'a', 50, 100, 10),
-        ('2026-09-01', 'a', 40, 100, 10);
+        ('2026-09-01', 'a', 40, 90, 9);
     """)
     execute_models(warehouse)
-    for model in ("stg_shopify_orders", "stg_meta_insights"):
-        assert warehouse.execute(f"select count(*) from {model}").fetchone() == (2,)
+    assert warehouse.execute("select count(*) from stg_shopify_orders").fetchone() == (1,)
+    assert warehouse.execute("select total_price from stg_shopify_orders").fetchone() == (80,)
+    assert warehouse.execute("select count(*) from stg_meta_insights").fetchone() == (1,)
+    assert warehouse.execute("select spend from stg_meta_insights").fetchone() == (50,)
 
 
 @pytest.mark.parametrize("amount", [None, -1, float("nan"), float("inf")])
-def test_invalid_amounts_are_not_silently_dropped_or_zeroed(warehouse, amount):
+def test_invalid_amounts_are_flagged_and_excluded_from_revenue_not_dropped(warehouse, amount):
     warehouse.execute(
         "insert into src_shopify_orders values ('1', '2026-09-01', ?, 'c', null)",
         [amount],
     )
     execute_models(warehouse)
-    value = warehouse.execute("select total_price from stg_shopify_orders").fetchone()[0]
-    assert value is None or value < 0  # not_null/non_negative must reject this row.
+    row = warehouse.execute(
+        "select total_price, total_price_is_invalid from stg_shopify_orders"
+    ).fetchone()
+    assert row[0] is None or row[0] < 0  # kept visible, not silently zeroed
+    assert row[1] is True
+    revenue = warehouse.execute(
+        "select revenue from int_shopify_daily where date = '2026-09-01'"
+    ).fetchone()[0]
+    assert revenue == 0  # excluded from revenue; the order still counts (see orders column)
+
+
+def test_unidentifiable_or_undated_rows_do_not_block_other_dates(warehouse):
+    """A single bad historical row (no order_id / no date) must not block the
+    daily mart from reaching an unrelated, otherwise-valid date."""
+    warehouse.execute("""
+        insert into src_shopify_orders values
+        (null, '2026-09-01 12:00:00+00', 100, 'c', null),
+        ('2', null, 100, 'c', null),
+        ('3', '2026-09-02 12:00:00+00', 100, 'c', null);
+        insert into src_meta_insights values
+        (null, 'a', 50, 100, 10),
+        ('2026-09-02', null, 50, 100, 10);
+    """)
+    execute_models(warehouse)
+    rows = warehouse.execute(
+        "select date, revenue, ad_spend from fct_marketing_performance order by date"
+    ).fetchall()
+    assert rows == [(date(2026, 9, 2), 100, None)]
 
 
 def test_empty_sources_produce_no_fabricated_metrics(warehouse):

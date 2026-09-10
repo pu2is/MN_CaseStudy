@@ -1,8 +1,9 @@
 version: 2
 models:
   - name: stg_shopify_orders
-    description: One row per order after type normalization and exact deduplication. Conflicting
-      order versions, missing required values and negative amounts fail dbt build.
+    description: One row per order. Orders that cannot be identified or dated are excluded;
+      conflicting order_id versions keep the most recent by created_at. A negative total_price is
+      kept and flagged, not dropped -- see total_price_is_invalid.
     columns:
       - name: order_id
         description: Shopify order identifier. Grain of this model.
@@ -22,10 +23,17 @@ models:
         data_tests:
           - not_null
       - name: total_price
-        description: Gross order value in EUR (assumed store currency). Must be known and non-negative.
-          Refunds require a separate source; see docs/data_contract.md.
+        description: Gross order value in EUR (assumed store currency), as sent by the source. See
+          total_price_is_invalid to identify rows excluded from revenue. Refunds require a separate
+          source; see docs/data_contract.md.
+        data_tests:
+          - non_negative:
+              config:
+                severity: warn
+      - name: total_price_is_invalid
+        description: True when total_price is negative or unknown. Excluded from int_shopify_daily
+          revenue; the order itself is still counted.
         data_tests:
           - not_null
-          - non_negative
       - name: discount_code
         description: Discount code applied to the order. Null when absent or blank.

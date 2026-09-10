@@ -1,8 +1,9 @@
 version: 2
 models:
   - name: stg_meta_insights
-    description: One row per campaign and date after type normalization and exact deduplication.
-      Conflicting snapshots and invalid required values fail dbt build.
+    description: One row per campaign and date. Rows that cannot be dated or attributed to a campaign
+      are excluded; conflicting (date, campaign_id) snapshots keep the highest-spend version. Negative
+      spend/impressions/clicks is kept and flagged, not dropped -- see has_invalid_negative_value.
     data_tests:
       - unique:
           arguments:
@@ -18,17 +19,26 @@ models:
         data_tests:
           - not_null
       - name: spend
-        description: Campaign spend in EUR. Must be known and non-negative; zero is valid.
+        description: Campaign spend in EUR, as sent by the source. See has_invalid_negative_value to
+          identify rows excluded from int_meta_daily. Zero is a valid value (e.g. a paused campaign).
         data_tests:
-          - not_null
-          - non_negative
+          - non_negative:
+              config:
+                severity: warn
       - name: impressions
-        description: Daily campaign impression count. Must be known and non-negative; zero is valid.
+        description: Daily campaign impression count, as sent by the source. Zero is a valid value.
         data_tests:
-          - not_null
-          - non_negative
+          - non_negative:
+              config:
+                severity: warn
       - name: clicks
-        description: Daily campaign click count. Must be known and non-negative; zero is valid.
+        description: Daily campaign click count, as sent by the source. Zero is a valid value.
+        data_tests:
+          - non_negative:
+              config:
+                severity: warn
+      - name: has_invalid_negative_value
+        description: True when spend, impressions, or clicks is negative or unknown. int_meta_daily
+          excludes all three metrics for such a row.
         data_tests:
           - not_null
-          - non_negative
