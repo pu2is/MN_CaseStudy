@@ -33,21 +33,21 @@ def evaluate_roas(
 ) -> RoasCheckResult:
     """Classify a fct_marketing_performance row against the ROAS threshold.
 
-    Missing or invalid metrics are DATA_UNAVAILABLE. A known zero-spend day
-    has undefined ROAS and is NO_SPEND, not a data-quality failure.
+    Missing or invalid metrics are DATA_UNAVAILABLE. A zero-spend day, or one
+    with no Meta data at all (ad_spend is null after the left join), has
+    undefined ROAS and is NO_SPEND, not a data-quality failure.
     """
     if not math.isfinite(threshold) or threshold < 0:
         raise ValueError("threshold must be finite and non-negative")
     row = row or {}
     roas, revenue, ad_spend = (row.get(key) for key in ("roas", "revenue", "ad_spend"))
-    valid_inputs = all(
-        value is not None and math.isfinite(value) and value >= 0 for value in (revenue, ad_spend)
-    )
-    if row.get("date") != target_date or not valid_inputs:
+    revenue_valid = revenue is not None and math.isfinite(revenue) and revenue >= 0
+    ad_spend_valid = ad_spend is None or (math.isfinite(ad_spend) and ad_spend >= 0)
+    if row.get("date") != target_date or not revenue_valid or not ad_spend_valid:
         status = RoasStatus.DATA_UNAVAILABLE
-    elif ad_spend == 0 and roas is None:
+    elif ad_spend is None or ad_spend == 0:
         status = RoasStatus.NO_SPEND
-    elif roas is None or not math.isfinite(roas) or roas < 0 or ad_spend == 0:
+    elif roas is None or not math.isfinite(roas) or roas < 0:
         status = RoasStatus.DATA_UNAVAILABLE
     else:
         status = RoasStatus.BELOW_THRESHOLD if roas < threshold else RoasStatus.OK

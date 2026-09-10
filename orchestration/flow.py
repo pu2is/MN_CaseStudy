@@ -47,53 +47,54 @@ def build_dbt() -> None:
 
 
 @task(retries=3, retry_delay_seconds=[10, 30, 60], cache_policy=NO_CACHE)
-def check_roas(target_date: date) -> RoasCheckResult:
-    settings = load_settings()
-    with bigquery.Client(project=settings.bigquery_project) as client:
+def check_roas(
+    target_date: date, bigquery_project: str, marts_dataset: str, roas_alert_threshold: float
+) -> RoasCheckResult:
+    with bigquery.Client(project=bigquery_project) as client:
         row = fetch_fct_marketing_performance_row(
-            client, settings.bigquery_project, settings.marts_dataset, target_date
+            client, bigquery_project, marts_dataset, target_date
         )
-    return evaluate_roas(row, target_date, settings.roas_alert_threshold)
+    return evaluate_roas(row, target_date, roas_alert_threshold)
 
 
-def alert_key(kind: str, target_date: date) -> str:
-    settings = load_settings()
-    return (
-        f"{settings.bigquery_project}.{settings.marts_dataset}:"
-        f"{settings.reporting_timezone}:{target_date}:{kind}"
-    )
+def alert_key(
+    kind: str, target_date: date, bigquery_project: str, marts_dataset: str, reporting_timezone: str
+) -> str:
+    return f"{bigquery_project}.{marts_dataset}:{reporting_timezone}:{target_date}:{kind}"
 
 
 @task(retries=0, cache_policy=NO_CACHE)
-def send_roas_alert(result: RoasCheckResult) -> None:
+def send_roas_alert(result: RoasCheckResult, delivery_key: str) -> None:
+    # Read directly from the environment -- a webhook secret must never be
+    # passed as a task parameter, where Prefect would record it as a visible
+    # task input.
     send_slack_alert(
-        load_settings().slack_webhook_url,
+        os.environ.get("SLACK_WEBHOOK_URL", "").strip(),
         build_slack_payload(result),
-        delivery_key=alert_key("low-roas", result.date),
+        delivery_key=delivery_key,
         state_path=alert_state_path(),
     )
 
 
 @task(retries=0, cache_policy=NO_CACHE)
-def send_operational_alert(target_date: date, stage: str) -> None:
-    settings = load_settings()
-    webhook = os.environ.get("OPS_SLACK_WEBHOOK_URL", "").strip() or settings.slack_webhook_url
+def send_operational_alert(
+    target_date: date, stage: str, bigquery_project: str, marts_dataset: str, delivery_key: str
+) -> None:
+    webhook = (
+        os.environ.get("OPS_SLACK_WEBHOOK_URL", "").strip()
+        or os.environ.get("SLACK_WEBHOOK_URL", "").strip()
+    )
     # Do not include exception text: API errors may contain credentials or source data.
     payload = {
         "text": (
             f":warning: *Marketing pipeline failure -- {target_date}*\n"
             f"Stage: {stage}\n"
-            f"Dataset: {settings.bigquery_project}.{settings.marts_dataset}\n"
+            f"Dataset: {bigquery_project}.{marts_dataset}\n"
             "Report not validated. Check the failed Prefect run and dbt results.\n"
             "This is a data/operations alert, not a low-ROAS warning."
         )
     }
-    send_slack_alert(
-        webhook,
-        payload,
-        delivery_key=alert_key(f"operations:{stage}", target_date),
-        state_path=alert_state_path(),
-    )
+    send_slack_alert(webhook, payload, delivery_key=delivery_key, state_path=alert_state_path())
 
 
 @flow(name="check-roas-and-alert")
@@ -111,13 +112,54 @@ def check_roas_and_alert_flow(target_date: date | None = None) -> RoasCheckResul
     try:
         build_dbt()
         stage = "roas-query"
-        result = check_roas(target_date)
+        result = check_roas(
+            target_date,
+            settings.bigquery_project,
+            settings.marts_dataset,
+            settings.roas_alert_threshold,
+        )
         if result.status is RoasStatus.DATA_UNAVAILABLE:
             stage = "data-quality"
             raise RuntimeError(f"ROAS data unavailable or invalid for {result.date}")
+        if result.status is RoasStatus.BELOW_THRESHOLD:
+            stage = "roas-alert"
+            logger.warning(
+                "ROAS %.2f on %s is below %.2f; checking alert delivery.",
+                result.roas,
+                result.date,
+                result.threshold,
+            )
+            send_roas_alert(
+                result,
+                alert_key(
+                    "low-roas",
+                    result.date,
+                    settings.bigquery_project,
+                    settings.marts_dataset,
+                    settings.reporting_timezone,
+                ),
+            )
+        elif result.status is RoasStatus.NO_SPEND:
+            logger.info("No ad spend on %s; ROAS is undefined and no alert is needed.", result.date)
+        else:
+            logger.info(
+                "ROAS %.2f on %s is at/above %.2f.", result.roas, result.date, result.threshold
+            )
     except Exception as pipeline_error:
         try:
-            send_operational_alert(target_date, stage)
+            send_operational_alert(
+                target_date,
+                stage,
+                settings.bigquery_project,
+                settings.marts_dataset,
+                alert_key(
+                    f"operations:{stage}",
+                    target_date,
+                    settings.bigquery_project,
+                    settings.marts_dataset,
+                    settings.reporting_timezone,
+                ),
+            )
         except Exception as notification_error:
             # Preserve both failures; notification problems cannot turn the run green.
             raise ExceptionGroup(
@@ -125,19 +167,6 @@ def check_roas_and_alert_flow(target_date: date | None = None) -> RoasCheckResul
                 [pipeline_error, notification_error],
             ) from None
         raise
-
-    if result.status is RoasStatus.BELOW_THRESHOLD:
-        logger.warning(
-            "ROAS %.2f on %s is below %.2f; checking alert delivery.",
-            result.roas,
-            result.date,
-            result.threshold,
-        )
-        send_roas_alert(result)
-    elif result.status is RoasStatus.NO_SPEND:
-        logger.info("No ad spend on %s; ROAS is undefined and no alert is needed.", result.date)
-    else:
-        logger.info("ROAS %.2f on %s is at/above %.2f.", result.roas, result.date, result.threshold)
     return result
 
 

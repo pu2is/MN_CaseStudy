@@ -73,3 +73,15 @@ def test_query_parameterizes_date_and_rejects_duplicate_days():
 def test_wrong_day_is_unavailable():
     row = {"date": date(2026, 9, 8), "roas": 1, "revenue": 100, "ad_spend": 100}
     assert evaluate_roas(row, TARGET_DATE, THRESHOLD).status is RoasStatus.DATA_UNAVAILABLE
+
+
+def test_no_meta_data_for_the_date_is_no_spend_not_unavailable():
+    """ad_spend is null (not 0) when int_meta_daily has no row for this date --
+    a paused-ads day, not a data-quality problem."""
+    row = {"date": TARGET_DATE, "roas": None, "revenue": 500.0, "ad_spend": None}
+
+    result = evaluate_roas(row, TARGET_DATE, THRESHOLD)
+
+    assert result.status is RoasStatus.NO_SPEND
+    assert result.revenue == 500.0
+    assert result.ad_spend is None

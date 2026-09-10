@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 
-from orchestration.delivery import finish, reserve
+from orchestration.delivery import already_sent, mark_sent
 from orchestration.roas_check import RoasCheckResult
 
 
@@ -41,32 +41,22 @@ def send_slack_alert(
     state_path: Path,
     timeout: float = 10.0,
 ) -> bool:
-    """Send once per durable key; ambiguous outcomes require operator reconciliation.
+    """Send once per durable key.
 
-    Return False for an already acknowledged delivery. No automatic HTTP retries.
+    Return False for a key already confirmed sent. A failed or ambiguous
+    attempt is not recorded, so the next run for the same key retries it --
+    at most a rare duplicate Slack message on a network hiccup, never a
+    silently dropped alert.
     """
     if not webhook_url:
         raise RuntimeError("Slack webhook is not configured; cannot send alert")
-    if not reserve(state_path, delivery_key):
+    if already_sent(state_path, delivery_key):
         return False
     try:
         response = httpx.post(webhook_url, json=payload, timeout=timeout)
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
-        finish(state_path, delivery_key, "failed")
-        raise SlackDeliveryError("Slack connection failed before sending") from None
     except httpx.RequestError:
-        finish(state_path, delivery_key, "uncertain")
-        raise SlackDeliveryError(
-            "Slack delivery outcome uncertain; reconcile before resending"
-        ) from None
-    # Only Slack's explicit acknowledgement establishes delivery. A 5xx or an
-    # unexpected response can follow a committed side effect, so do not resend.
+        raise SlackDeliveryError("Slack delivery failed before confirmation") from None
     if response.status_code == 200 and response.text.strip() == "ok":
-        finish(state_path, delivery_key, "sent")
+        mark_sent(state_path, delivery_key)
         return True
-    rejected = response.status_code in (400, 403, 404, 410, 429)
-    finish(state_path, delivery_key, "failed" if rejected else "uncertain")
-    raise SlackDeliveryError(
-        f"Slack delivery failed (HTTP {response.status_code}); "
-        + ("request rejected" if rejected else "outcome uncertain; reconcile before resending"),
-    )
+    raise SlackDeliveryError(f"Slack delivery failed (HTTP {response.status_code})")

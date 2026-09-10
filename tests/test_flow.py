@@ -8,7 +8,6 @@ import pytest
 from prefect import flow
 from prefect.testing.utilities import prefect_test_harness
 
-from orchestration.delivery import DeliveryUncertain
 from orchestration.flow import (
     build_dbt,
     check_roas_and_alert_flow,
@@ -125,15 +124,24 @@ def test_repeated_low_roas_runs_do_not_duplicate_alert(services):
     post.assert_called_once()
 
 
-def test_ambiguous_post_is_not_retried_on_flow_rerun(services):
+def test_failed_low_roas_alert_triggers_operational_notification_and_is_retried(services):
+    """A failed low-ROAS Slack delivery must not vanish silently: it has to
+    surface as an operational failure, and a later run must still be able to
+    deliver it since it was never marked sent."""
     _, fetch, post = services
     fetch.return_value = {"date": TARGET, "roas": 1.2, "revenue": 120, "ad_spend": 100}
     post.side_effect = httpx.ReadTimeout("response lost")
-    with pytest.raises(SlackDeliveryError, match="uncertain"):
+    with pytest.raises(ExceptionGroup) as error:
         check_roas_and_alert_flow()
-    with pytest.raises(DeliveryUncertain):
-        check_roas_and_alert_flow()
-    post.assert_called_once()
+    assert len(error.value.exceptions) == 2
+    assert all(isinstance(exc, SlackDeliveryError) for exc in error.value.exceptions)
+    assert post.call_count == 2  # the failed low-ROAS alert, then the operational alert
+
+    post.side_effect = None
+    post.return_value = httpx.Response(200, text="ok")
+    result = check_roas_and_alert_flow()
+    assert result.status is RoasStatus.BELOW_THRESHOLD
+    assert post.call_count == 3  # the low-ROAS alert retried and delivered
 
 
 def test_operational_notification_failure_preserves_both_errors(services):

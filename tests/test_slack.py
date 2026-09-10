@@ -57,8 +57,8 @@ def test_missing_webhook_does_not_reserve_delivery(send):
     post.assert_called_once()
 
 
-@pytest.mark.parametrize("status", [400, 403, 429])
-def test_explicit_rejections_allow_later_manual_rerun(send, status):
+@pytest.mark.parametrize("status", [400, 403, 429, 500])
+def test_rejected_or_unexpected_responses_allow_later_manual_rerun(send, status):
     with patch("orchestration.slack.httpx.post", return_value=httpx.Response(status)):
         with pytest.raises(SlackDeliveryError, match=f"HTTP {status}") as error:
             send()
@@ -70,15 +70,16 @@ def test_explicit_rejections_allow_later_manual_rerun(send, status):
     post.assert_called_once()
 
 
-@pytest.mark.parametrize("response", [httpx.Response(500), httpx.Response(200, text="unexpected")])
-def test_unconfirmed_response_blocks_resend(send, response):
-    from orchestration.delivery import DeliveryUncertain
-
-    with patch("orchestration.slack.httpx.post", return_value=response) as post:
-        with pytest.raises(SlackDeliveryError, match="uncertain"):
+def test_unexpected_200_body_is_not_recorded_as_sent(send):
+    with patch(
+        "orchestration.slack.httpx.post", return_value=httpx.Response(200, text="unexpected")
+    ):
+        with pytest.raises(SlackDeliveryError, match="HTTP 200"):
             send()
-        with pytest.raises(DeliveryUncertain):
-            send()
+    with patch(
+        "orchestration.slack.httpx.post", return_value=httpx.Response(200, text="ok")
+    ) as post:
+        send()
     post.assert_called_once()
 
 
@@ -89,3 +90,17 @@ def test_connection_failure_before_sending_allows_later_rerun(send):
     assert "secret-url" not in str(error.value)
     with patch("orchestration.slack.httpx.post", return_value=httpx.Response(200, text="ok")):
         assert send()
+
+
+def test_ambiguous_timeout_does_not_block_the_next_run(send):
+    """A response lost to a timeout is not distinguished from any other
+    failure -- the key is simply retried next run, at the cost of a rare
+    duplicate Slack message rather than a silently dropped alert."""
+    with patch("orchestration.slack.httpx.post", side_effect=httpx.ReadTimeout("response lost")):
+        with pytest.raises(SlackDeliveryError):
+            send()
+    with patch(
+        "orchestration.slack.httpx.post", return_value=httpx.Response(200, text="ok")
+    ) as post:
+        assert send() is True
+    post.assert_called_once()
