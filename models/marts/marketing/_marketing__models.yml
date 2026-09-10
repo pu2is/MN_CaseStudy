@@ -40,6 +40,19 @@ models:
         description: Daily Meta clicks. Null when no Meta data exists for this date.
         data_tests:
           - non_negative
+      - name: invalid_shopify_revenue_rows
+        description: Count of Shopify orders on this date excluded from revenue due to an invalid
+          total_price. Null when no Shopify data exists for this date. A positive value means revenue
+          for this date is a partial, not complete, view of that date's orders.
+        data_tests:
+          - non_negative
+      - name: invalid_meta_rows
+        description: Count of Meta campaign rows on this date excluded from ad_spend, impressions
+          and clicks due to an invalid negative or unknown value. Null when no Meta data exists for
+          this date. A positive value means those metrics for this date are a partial, not complete,
+          view of that date's Meta data.
+        data_tests:
+          - non_negative
       - name: roas
         description: Blended revenue / ad_spend. Null when revenue or spend is unknown, or spend
           is zero.

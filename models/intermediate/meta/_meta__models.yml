@@ -3,7 +3,8 @@ models:
   - name: int_meta_daily
     description: One row per date, aggregating Meta ad insights across all campaigns. Rows flagged
       with an invalid negative or unknown value (spend, impressions, or clicks) are excluded entirely
-      from all three sums -- see stg_meta_insights.has_invalid_negative_value.
+      from all three sums -- see stg_meta_insights.has_invalid_negative_value. The excluded row count
+      is preserved in invalid_rows so downstream consumers can tell a complete day from a partial one.
     columns:
       - name: date
         description: Reporting date. Grain of this model.
@@ -20,5 +21,11 @@ models:
           - not_null
       - name: clicks
         description: Sum of clicks across all campaigns for this date.
+        data_tests:
+          - not_null
+      - name: invalid_rows
+        description: Count of campaign rows for this date excluded from ad_spend, impressions and
+          clicks due to an invalid negative or unknown value. A non-zero count means the sums above
+          are a partial, not complete, view of this date's Meta data.
         data_tests:
           - not_null

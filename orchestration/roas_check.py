@@ -36,18 +36,27 @@ def evaluate_roas(
     Missing or invalid metrics are DATA_UNAVAILABLE. No Meta data at all for
     the date (ad_spend is null after the left join) is also DATA_UNAVAILABLE,
     since there is no way to tell a successful empty load from an ingestion
-    failure. An explicit zero-spend day has undefined ROAS and is NO_SPEND,
-    not a data-quality failure.
+    failure. A day where source rows were excluded upstream as invalid
+    (invalid_meta_rows / invalid_shopify_revenue_rows > 0) is DATA_UNAVAILABLE
+    too, since its metrics are a partial, not complete, view of that date. An
+    explicit zero-spend day with no excluded rows has undefined ROAS and is
+    NO_SPEND, not a data-quality failure.
     """
     if not math.isfinite(threshold) or threshold < 0:
         raise ValueError("threshold must be finite and non-negative")
     row = row or {}
     roas, revenue, ad_spend = (row.get(key) for key in ("roas", "revenue", "ad_spend"))
+    invalid_meta_rows, invalid_shopify_revenue_rows = (
+        row.get(key) for key in ("invalid_meta_rows", "invalid_shopify_revenue_rows")
+    )
     revenue_valid = revenue is not None and math.isfinite(revenue) and revenue >= 0
     ad_spend_valid = ad_spend is None or (math.isfinite(ad_spend) and ad_spend >= 0)
+    has_invalid_source_rows = (invalid_meta_rows or 0) > 0 or (invalid_shopify_revenue_rows or 0) > 0
     if row.get("date") != target_date or not revenue_valid or not ad_spend_valid:
         status = RoasStatus.DATA_UNAVAILABLE
     elif ad_spend is None:
+        status = RoasStatus.DATA_UNAVAILABLE
+    elif has_invalid_source_rows:
         status = RoasStatus.DATA_UNAVAILABLE
     elif ad_spend == 0:
         status = RoasStatus.NO_SPEND
@@ -73,7 +82,7 @@ def fetch_fct_marketing_performance_row(
 ) -> dict[str, Any] | None:
     """Fetch the fct_marketing_performance row for a single date, if it exists."""
     query = f"""
-        select date, roas, revenue, ad_spend
+        select date, roas, revenue, ad_spend, invalid_meta_rows, invalid_shopify_revenue_rows
         from `{project}.{dataset}.fct_marketing_performance`
         where date = @target_date
     """

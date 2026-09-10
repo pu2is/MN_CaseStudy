@@ -29,6 +29,8 @@ select
     meta.ad_spend,
     meta.impressions,
     meta.clicks,
+    shopify.invalid_revenue_rows as invalid_shopify_revenue_rows,
+    meta.invalid_rows as invalid_meta_rows,
     -- Zero/unknown spend makes ROAS undefined. CAC is zero for zero spend
     -- with known new customers, and undefined for zero/unknown new customers.
     safe_divide(shopify.revenue, meta.ad_spend) as roas,

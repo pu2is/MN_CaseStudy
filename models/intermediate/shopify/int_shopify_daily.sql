@@ -3,6 +3,9 @@ select
     -- Orders flagged with an invalid (negative or unknown) total_price are
     -- excluded from revenue; the order itself still counts below.
     sum(case when not orders.total_price_is_invalid then orders.total_price else 0 end) as revenue,
+    -- Lets downstream consumers tell a fully valid day apart from one where
+    -- some orders were excluded from revenue above.
+    countif(orders.total_price_is_invalid) as invalid_revenue_rows,
     count(*) as orders,
     -- Multiple first-day orders still represent one new customer.
     count(distinct case

@@ -97,6 +97,24 @@ def test_missing_meta_data_sends_operational_alert_and_fails(services):
     assert "pipeline failure" in post.call_args.kwargs["json"]["text"]
 
 
+def test_excluded_meta_rows_sends_operational_alert_and_fails(services):
+    """A day with excluded (invalid) Meta rows must fail the flow like other
+    unavailable data, since ad_spend for that day is a partial sum, not a
+    complete one."""
+    _, fetch, post = services
+    fetch.return_value = {
+        "date": TARGET,
+        "roas": 1.8,
+        "revenue": 1800,
+        "ad_spend": 1000,
+        "invalid_meta_rows": 1,
+    }
+    with pytest.raises(RuntimeError, match="unavailable"):
+        check_roas_and_alert_flow()
+    post.assert_called_once()
+    assert "pipeline failure" in post.call_args.kwargs["json"]["text"]
+
+
 def test_repeated_runs_query_fresh_data(services):
     _, fetch, post = services
     fetch.side_effect = [

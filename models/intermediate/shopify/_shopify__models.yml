@@ -17,7 +17,9 @@ models:
           - not_null
   - name: int_shopify_daily
     description: One row per date, aggregating orders into revenue, order count and distinct
-      first-time customers.
+      first-time customers. Orders with an invalid total_price are excluded from revenue; the
+      excluded count is preserved in invalid_revenue_rows so downstream consumers can tell a
+      complete day from a partial one.
     columns:
       - name: date
         description: Calendar date. Grain of this model.
@@ -27,6 +29,12 @@ models:
       - name: revenue
         description: Sum of total_price for orders placed on this date, excluding orders flagged
           with an invalid (negative or unknown) total_price -- see stg_shopify_orders.
+        data_tests:
+          - not_null
+      - name: invalid_revenue_rows
+        description: Count of orders placed on this date excluded from revenue due to an invalid
+          (negative or unknown) total_price. A non-zero count means revenue above is a partial, not
+          complete, view of this date's orders.
         data_tests:
           - not_null
       - name: orders

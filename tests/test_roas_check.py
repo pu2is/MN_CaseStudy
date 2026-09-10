@@ -67,6 +67,8 @@ def test_query_parameterizes_date_and_rejects_duplicate_days():
         fetch_fct_marketing_performance_row(client, "project", "dataset", TARGET_DATE)
     args, kwargs = client.query.call_args
     assert "where date = @target_date" in args[0]
+    assert "invalid_meta_rows" in args[0]
+    assert "invalid_shopify_revenue_rows" in args[0]
     assert kwargs["job_config"].query_parameters[0].value == TARGET_DATE
 
 
@@ -96,3 +98,66 @@ def test_explicit_zero_spend_is_no_spend():
     assert result.status is RoasStatus.NO_SPEND
     assert result.revenue == 500.0
     assert result.ad_spend == 0.0
+
+
+def test_excluded_meta_rows_is_unavailable_even_with_positive_spend():
+    """int_meta_daily excluded some rows as invalid -- ad_spend is a partial
+    sum for the date, not a complete one, so ROAS must not be evaluated on it."""
+    row = {
+        "date": TARGET_DATE,
+        "roas": 1.8,
+        "revenue": 1800.0,
+        "ad_spend": 1000.0,
+        "invalid_meta_rows": 1,
+    }
+
+    result = evaluate_roas(row, TARGET_DATE, THRESHOLD)
+
+    assert result.status is RoasStatus.DATA_UNAVAILABLE
+
+
+def test_excluded_shopify_revenue_rows_is_unavailable():
+    """int_shopify_daily excluded an order as invalid -- revenue is a partial
+    sum for the date, not a complete one."""
+    row = {
+        "date": TARGET_DATE,
+        "roas": 1.8,
+        "revenue": 1800.0,
+        "ad_spend": 1000.0,
+        "invalid_shopify_revenue_rows": 1,
+    }
+
+    result = evaluate_roas(row, TARGET_DATE, THRESHOLD)
+
+    assert result.status is RoasStatus.DATA_UNAVAILABLE
+
+
+def test_excluded_meta_rows_is_unavailable_even_at_zero_spend():
+    """Invalid rows plus zero remaining spend must not read as a quiet
+    NO_SPEND day -- the zero is a partial sum, not a confirmed zero."""
+    row = {
+        "date": TARGET_DATE,
+        "roas": None,
+        "revenue": 500.0,
+        "ad_spend": 0.0,
+        "invalid_meta_rows": 1,
+    }
+
+    result = evaluate_roas(row, TARGET_DATE, THRESHOLD)
+
+    assert result.status is RoasStatus.DATA_UNAVAILABLE
+
+
+def test_zero_invalid_rows_does_not_block_evaluation():
+    row = {
+        "date": TARGET_DATE,
+        "roas": 1.8,
+        "revenue": 1800.0,
+        "ad_spend": 1000.0,
+        "invalid_meta_rows": 0,
+        "invalid_shopify_revenue_rows": 0,
+    }
+
+    result = evaluate_roas(row, TARGET_DATE, THRESHOLD)
+
+    assert result.status is RoasStatus.OK
