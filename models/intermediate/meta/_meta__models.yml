@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: int_meta_daily
+    description: >
+      One row per calendar date, aggregating Meta ad insights across all
+      campaigns. Rows flagged with an invalid negative value (spend,
+      impressions, or clicks) are excluded entirely from all three sums, since
+      a bad measurement on one field puts the whole reported row in question.
+    columns:
+      - name: date
+        description: Reporting date. Grain of this model.
+        data_tests:
+          - unique
+          - not_null
+      - name: ad_spend
+        description: Sum of spend across all campaigns for this date, in EUR.
+        data_tests:
+          - not_null
+      - name: impressions
+        description: Sum of impressions across all campaigns for this date.
+        data_tests:
+          - not_null
+      - name: clicks
+        description: Sum of clicks across all campaigns for this date.
+        data_tests:
+          - not_null

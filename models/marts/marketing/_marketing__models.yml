@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: fct_marketing_performance
+    description: >
+      One row per calendar date, joining daily Shopify performance to daily
+      Meta ad performance and computing simplified blended ROAS and CAC.
+
+      Business limitation: the mock data has no attribution key linking a
+      Shopify order to the Meta campaign that drove it. roas and cac are
+      therefore blended proxies (all revenue vs. all spend, all spend vs. all
+      new customers, for the same calendar date) and must not be read as
+      Meta-attributed, campaign-level metrics.
+
+      Built from a full date spine over int_shopify_daily and int_meta_daily,
+      so a date with data from only one source still gets a row -- the
+      missing side's fields are null (unknown), not zero.
+    columns:
+      - name: date
+        description: Calendar date. Grain of this model.
+        data_tests:
+          - unique
+          - not_null
+      - name: revenue
+        description: Daily Shopify revenue. Null when no Shopify data exists for this date.
+      - name: orders
+        description: Daily Shopify order count. Null when no Shopify data exists for this date.
+      - name: new_customers
+        description: >
+          Daily count of customers placing their first known order. Null when
+          no Shopify data exists for this date.
+      - name: ad_spend
+        description: Daily Meta ad spend, in EUR. Null when no Meta data exists for this date.
+      - name: impressions
+        description: Daily Meta impressions. Null when no Meta data exists for this date.
+      - name: clicks
+        description: Daily Meta clicks. Null when no Meta data exists for this date.
+      - name: roas
+        description: >
+          Simplified blended ROAS proxy: revenue / ad_spend. Not true
+          Meta-attributed ROAS -- see model description. Null (not 0) when
+          ad_spend is 0 or unknown; safe_divide never turns an undefined
+          ratio into a misleading zero.
+      - name: cac
+        description: >
+          Simplified blended CAC proxy: ad_spend / new_customers, in EUR. Not
+          true Meta-attributed CAC -- see model description. Null (not 0)
+          when new_customers is 0 or unknown.
