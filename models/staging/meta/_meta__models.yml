@@ -23,13 +23,21 @@ models:
       - name: spend
         description: >
           Ad spend in EUR, as sent by the source (including negative values,
-          if any). Zero is a valid value (e.g. a paused campaign).
+          if any). Zero is a valid value (e.g. a paused campaign). Negative
+          spend has no legitimate business meaning, unlike a Shopify refund,
+          so it's treated as an error, not a warning.
+        data_tests:
+          - non_negative
       - name: impressions
         description: >
           Ad impressions, as sent by the source. Zero is a valid value.
+        data_tests:
+          - non_negative
       - name: clicks
         description: >
           Ad clicks, as sent by the source. Zero is a valid value.
+        data_tests:
+          - non_negative
       - name: has_invalid_negative_value
         description: >
           True when spend, impressions, or clicks is a negative number.

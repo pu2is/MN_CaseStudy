@@ -32,7 +32,14 @@ models:
       - name: total_price
         description: >
           Order value, as sent by the source (including negative values, if
-          any) -- see total_price_is_invalid to identify those.
+          any) -- see total_price_is_invalid to identify those. Negative
+          values are warned on, not errored on, since a refund/adjustment
+          could plausibly produce one; that's a business event, not
+          necessarily a data quality bug.
+        data_tests:
+          - non_negative:
+              config:
+                severity: warn
       - name: total_price_is_invalid
         description: True when total_price is a negative number.
         data_tests:

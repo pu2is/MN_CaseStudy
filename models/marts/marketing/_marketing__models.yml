@@ -25,24 +25,43 @@ models:
         description: Daily Shopify revenue. Null when no Shopify data exists for this date.
       - name: orders
         description: Daily Shopify order count. Null when no Shopify data exists for this date.
+        data_tests:
+          - non_negative
       - name: new_customers
         description: >
           Daily count of customers placing their first known order. Null when
-          no Shopify data exists for this date.
+          no Shopify data exists for this date. Cannot exceed orders on the
+          same date, since every new customer's first order is itself one of
+          that date's orders.
+        data_tests:
+          - non_negative
+          - not_greater_than:
+              arguments:
+                other_column_name: orders
       - name: ad_spend
         description: Daily Meta ad spend, in EUR. Null when no Meta data exists for this date.
+        data_tests:
+          - non_negative
       - name: impressions
         description: Daily Meta impressions. Null when no Meta data exists for this date.
+        data_tests:
+          - non_negative
       - name: clicks
         description: Daily Meta clicks. Null when no Meta data exists for this date.
+        data_tests:
+          - non_negative
       - name: roas
         description: >
           Simplified blended ROAS proxy: revenue / ad_spend. Not true
           Meta-attributed ROAS -- see model description. Null (not 0) when
           ad_spend is 0 or unknown; safe_divide never turns an undefined
           ratio into a misleading zero.
+        data_tests:
+          - non_negative
       - name: cac
         description: >
           Simplified blended CAC proxy: ad_spend / new_customers, in EUR. Not
           true Meta-attributed CAC -- see model description. Null (not 0)
           when new_customers is 0 or unknown.
+        data_tests:
+          - non_negative
