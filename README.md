@@ -1,75 +1,98 @@
-# mellow NOIR — Marketing Performance Case Study
+# mellow NOIR Fallstudie
 
-Daily CAC/ROAS reporting pipeline: Shopify orders + Meta Ads spend, merged in BigQuery via dbt
-into `fct_marketing_performance`, with Prefect-based orchestration and Slack alerting on
-ROAS drops.
+Dieses Repository enthält die Lösung der Fallstudie für die Position Full-Stack Data Engineer. Die Datenmodelle berechnen tägliche Blended-Proxys für CAC und ROAS aus Shopify- und Meta-Daten. Die optionale Automatisierung prüft den ROAS mit Prefect und sendet bei einem Wert unter dem Schwellenwert eine Slack-Warnung.
 
-## Where things live
+## Dokumentation
 
-| Path | Contents |
+| Inhalt | Datei |
 | --- | --- |
-| [`models/`](models/) | dbt SQL models (`staging/` → `intermediate/` → `marts/`) |
-| [`orchestration/`](orchestration/) | Prefect flow(s) that run dbt and send Slack alerts |
-| [`architecture/`](architecture/) | Architecture diagram(s) and written answers to Task 1 |
-| [`docs/`](docs/) | Supporting write-ups and notes |
-| [`dbt_project.yml`](dbt_project.yml), [`profiles.yml`](profiles.yml) | dbt project + connection config (no secrets — see below) |
-| [`pyproject.toml`](pyproject.toml), [`uv.lock`](uv.lock) | Python dependencies, managed with [uv](https://docs.astral.sh/uv/) |
+| Architektur, Tech Stack, Trade-offs, Skalierung und Kosten | [`doc/01_Architektur_und_Infrastruktur.md`](doc/01_Architektur_und_Infrastruktur.md) |
+| Architekturdiagramm | [`doc/01_Architekturdiagramm.drawio`](doc/01_Architekturdiagramm.drawio) |
+| Datenpipeline, Modellierung, Kennzahlen und Datenqualität | [`doc/02_Data_Pipelines_und_Modellierung.md`](doc/02_Data_Pipelines_und_Modellierung.md) |
+| Automatisierung und KI-Ausblick | [`doc/03_Automatisierung_und_KI.md`](doc/03_Automatisierung_und_KI.md) |
 
-## Setup
+## Erste Schritte
+
+Voraussetzungen sind Python 3.11 oder neuer, `uv`, ein Google-Cloud-Projekt mit BigQuery und lokale Application Default Credentials.
 
 ```bash
 uv sync
-uv run dbt --version
-uv run dbt parse
-```
-
-`dbt` commands need `DBT_PROFILES_DIR` pointed at the repo root (or pass `--profiles-dir .`):
-
-```bash
 export DBT_PROFILES_DIR=.
+gcloud auth application-default login
 ```
 
-## Running the ROAS alert flow
+Für BigQuery werden mindestens diese Variablen benötigt.
 
 ```bash
-uv run python -m orchestration.flow
+export BIGQUERY_PROJECT="<gcp-project-id>"
+export BIGQUERY_DATASET="mellow_noir"
+export BIGQUERY_LOCATION="EU"
+export REPORTING_TIMEZONE="Europe/Berlin"
 ```
 
-This runs `run_dbt` -> `run_dbt_tests` -> `check_yesterday_roas` -> `send_slack_alert`
-(ingestion is assumed to have already completed and is out of scope here). A Slack
-message is only sent when yesterday's ROAS is below the alert threshold; a missing or
-null ROAS is treated as a data-quality issue, not a low-ROAS alert, and stays silent.
+Die Raw-Tabellen `src_shopify_orders` und `src_meta_insights` müssen im Dataset `BIGQUERY_DATASET` vorhanden sein. Die Ingestion selbst ist nicht Teil des ausführbaren Codes.
 
-Additional environment variables beyond the BigQuery ones above:
+### dbt ausführen
 
-- `SLACK_WEBHOOK_URL` — required only when an alert actually fires.
-- `ROAS_ALERT_THRESHOLD` — defaults to `1.5`.
-- `BIGQUERY_MARTS_DATASET` — defaults to `<BIGQUERY_DATASET>_marts`, matching dbt's
-  default schema naming for the `marts` custom schema.
-- `REPORTING_TIMEZONE` — defaults to `Europe/Berlin`. The single reporting-timezone
-  policy shared by the Prefect flow's "yesterday" calculation and dbt's `order_date`
-  derivation in `stg_shopify_orders` (forwarded to every `dbt` invocation via
-  `--vars`, so it never drifts from the `reporting_timezone` default in
-  `dbt_project.yml`). Also documents the assumed Meta ad account timezone — see
-  `models/staging/meta/stg_meta_insights.sql`. If a real Meta ad account uses a
-  different timezone, its dates must be normalized to this one before joining.
+```bash
+uv run dbt build
+```
 
-Run the automated tests (BigQuery and the Slack webhook call are both mocked) with:
+Die Modelle werden in drei Schemas materialisiert.
+
+```text
+<dataset>_staging
+<dataset>_intermediate
+<dataset>_marts
+```
+
+Das finale Modell liegt unter `<dataset>_marts.fct_marketing_performance`.
+
+### Tests ausführen
 
 ```bash
 uv run pytest
 ```
 
-## Credentials
+Die Python-Tests mocken BigQuery und Slack. Die SQL-Modelltests verwenden lokale Fixtures mit DuckDB und SQLGlot. Ein echter BigQuery-Lauf wird dadurch nicht ersetzt.
 
-No secrets are committed to this repo. `profiles.yml` reads connection details from
-environment variables:
+### ROAS-Warnung einmalig ausführen
 
-- `dev` target: uses local `gcloud auth application-default login` credentials (no keyfile
-  needed).
-- `ci` target: reads a service-account keyfile *path* from `GOOGLE_APPLICATION_CREDENTIALS`.
-- `BIGQUERY_PROJECT`, `BIGQUERY_DATASET`, `BIGQUERY_LOCATION` override the BigQuery
-  destination.
+Für Performance-Warnungen wird `SLACK_WEBHOOK_URL` verwendet. `OPS_SLACK_WEBHOOK_URL` kann optional einen getrennten Kanal für technische Fehler definieren. Vor dem Flow-Start muss mindestens einer dieser Webhooks konfiguriert sein.
 
-Slack webhook URLs and any API tokens are supplied at runtime via environment variables —
-never checked in.
+```bash
+export SLACK_WEBHOOK_URL="<slack-webhook>"
+export ROAS_ALERT_THRESHOLD="1.5"
+uv run python -m orchestration.flow
+```
+
+Ein bestimmtes Datum kann manuell geprüft werden.
+
+```bash
+uv run python -m orchestration.flow --date 2026-09-09
+```
+
+### Täglichen Prefect Flow starten
+
+```bash
+uv run python -m orchestration.schedule
+```
+
+Der Flow läuft täglich um 08:00 Uhr in `REPORTING_TIMEZONE` und setzt voraus, dass die Raw-Daten vorher geladen wurden.
+
+## Projektstruktur
+
+```text
+.
+├── doc/                 Dokumentation und Architekturdiagramm
+├── models/              dbt Modelle
+├── macros/              benutzerdefinierte dbt Tests
+├── orchestration/       Prefect Flow und Slack-Automatisierung
+├── tests/               automatisierte Python- und Modelltests
+├── dbt_project.yml      dbt Projektkonfiguration
+├── profiles.yml         BigQuery Profil ohne Secrets
+├── pyproject.toml       Python-Abhängigkeiten
+└── uv.lock              gesperrte Abhängigkeitsversionen
+```
+
+Secrets werden ausschließlich zur Laufzeit über Umgebungsvariablen oder lokale Google-Credentials bereitgestellt.
