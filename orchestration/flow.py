@@ -1,28 +1,21 @@
-"""Prefect flow: run dbt, then check yesterday's ROAS and alert Slack if it's low.
+"""Build and validate the daily mart, then alert on yesterday's blended ROAS.
 
-Conceptual production flow:
-
-    ingest_shopify -> ingest_meta -> run_dbt -> run_dbt_tests
-        -> check_yesterday_roas -> validate_slack_webhook_url -> send_slack_alert
-
-Ingestion is out of scope for this case study (assumed already complete), so
-this flow starts at run_dbt. Retries are attached to every task that talks to
-an external system (BigQuery, Slack, or a dbt subprocess hitting BigQuery),
-not to the pure classification logic in roas_check.evaluate_roas or to
-validate_slack_webhook_url, whose config error is permanent and never worth
-retrying.
+Ingestion is assumed complete by the case study. External tasks explicitly
+disable caching so each invocation performs its database or delivery operation.
 """
 
 from __future__ import annotations
 
-import json
+import argparse
 import os
 import subprocess
-from datetime import timedelta
+import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 from google.cloud import bigquery
 from prefect import flow, get_run_logger, task
+from prefect.cache_policies import NO_CACHE
 
 from orchestration.roas_check import (
     RoasCheckResult,
@@ -30,104 +23,125 @@ from orchestration.roas_check import (
     evaluate_roas,
     fetch_fct_marketing_performance_row,
 )
-from orchestration.settings import load_settings, reporting_today
-from orchestration.slack import build_slack_payload, send_slack_alert
+from orchestration.settings import alert_state_path, load_settings, reporting_today
+from orchestration.slack import (
+    build_slack_payload,
+    send_slack_alert,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _run_dbt_command(*args: str) -> None:
+@task(retries=0, cache_policy=NO_CACHE)
+def build_dbt() -> None:
     env = {**os.environ, "DBT_PROFILES_DIR": str(REPO_ROOT)}
-    subprocess.run(["uv", "run", "dbt", *args], cwd=REPO_ROOT, env=env, check=True)
-
-
-def _dbt_vars_args(settings) -> tuple[str, str]:
-    # Forwards the same reporting timezone Python uses for "yesterday" into
-    # dbt's order_date calculation, so the two never drift -- see
-    # orchestration/settings.py's module docstring.
-    return ("--vars", json.dumps({"reporting_timezone": settings.reporting_timezone}))
-
-
-@task(retries=1, retry_delay_seconds=30)
-def run_dbt() -> None:
-    settings = load_settings()
-    _run_dbt_command("run", *_dbt_vars_args(settings))
-
-
-@task(retries=1, retry_delay_seconds=30)
-def run_dbt_tests() -> None:
-    settings = load_settings()
-    _run_dbt_command("test", *_dbt_vars_args(settings))
-
-
-@task(retries=3, retry_delay_seconds=[10, 30, 60])
-def check_yesterday_roas() -> RoasCheckResult:
-    settings = load_settings()
-    yesterday = reporting_today(settings) - timedelta(days=1)
-
-    client = bigquery.Client(project=settings.bigquery_project)
-    row = fetch_fct_marketing_performance_row(
-        client, settings.bigquery_project, settings.marts_dataset, yesterday
+    # Use the running environment; nested `uv run` could select another Python.
+    # build tests upstream models before allowing dependent models to run.
+    subprocess.run(
+        [sys.executable, "-m", "dbt.cli.main", "build"],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        timeout=1800,
     )
-    return evaluate_roas(row, yesterday, settings.roas_alert_threshold)
 
 
-@task
-def validate_slack_webhook_url() -> str:
-    """Fail fast on missing Slack configuration.
-
-    A missing SLACK_WEBHOOK_URL is a permanent configuration error, not a
-    transient failure -- retrying it would just delay an inevitable failure.
-    This task deliberately has no retries so the flow fails immediately,
-    while send_roas_alert's HTTP call keeps its own retries for genuinely
-    transient delivery failures.
-    """
+@task(retries=3, retry_delay_seconds=[10, 30, 60], cache_policy=NO_CACHE)
+def check_roas(target_date: date) -> RoasCheckResult:
     settings = load_settings()
-    if not settings.slack_webhook_url:
-        raise RuntimeError("SLACK_WEBHOOK_URL is not set -- cannot send ROAS alert.")
-    return settings.slack_webhook_url
+    with bigquery.Client(project=settings.bigquery_project) as client:
+        row = fetch_fct_marketing_performance_row(
+            client, settings.bigquery_project, settings.marts_dataset, target_date
+        )
+    return evaluate_roas(row, target_date, settings.roas_alert_threshold)
 
 
-@task(retries=3, retry_delay_seconds=[10, 30, 60])
-def send_roas_alert(webhook_url: str, result: RoasCheckResult) -> None:
-    payload = build_slack_payload(result)
-    send_slack_alert(webhook_url, payload)
+def alert_key(kind: str, target_date: date) -> str:
+    settings = load_settings()
+    return (
+        f"{settings.bigquery_project}.{settings.marts_dataset}:"
+        f"{settings.reporting_timezone}:{target_date}:{kind}"
+    )
+
+
+@task(retries=0, cache_policy=NO_CACHE)
+def send_roas_alert(result: RoasCheckResult) -> None:
+    send_slack_alert(
+        load_settings().slack_webhook_url,
+        build_slack_payload(result),
+        delivery_key=alert_key("low-roas", result.date),
+        state_path=alert_state_path(),
+    )
+
+
+@task(retries=0, cache_policy=NO_CACHE)
+def send_operational_alert(target_date: date, stage: str) -> None:
+    settings = load_settings()
+    webhook = os.environ.get("OPS_SLACK_WEBHOOK_URL", "").strip() or settings.slack_webhook_url
+    # Do not include exception text: API errors may contain credentials or source data.
+    payload = {
+        "text": (
+            f":warning: *Marketing pipeline failure -- {target_date}*\n"
+            f"Stage: {stage}\n"
+            f"Dataset: {settings.bigquery_project}.{settings.marts_dataset}\n"
+            "Report not validated. Check the failed Prefect run and dbt results.\n"
+            "This is a data/operations alert, not a low-ROAS warning."
+        )
+    }
+    send_slack_alert(
+        webhook,
+        payload,
+        delivery_key=alert_key(f"operations:{stage}", target_date),
+        state_path=alert_state_path(),
+    )
 
 
 @flow(name="check-roas-and-alert")
-def check_roas_and_alert_flow() -> RoasCheckResult:
+def check_roas_and_alert_flow(target_date: date | None = None) -> RoasCheckResult:
     logger = get_run_logger()
-
-    run_dbt()
-    run_dbt_tests()
-
-    result = check_yesterday_roas()
+    # Freeze the business date before build/retries can cross midnight.
+    settings = load_settings()
+    target_date = target_date or reporting_today(settings) - timedelta(days=1)
+    # Configuration is mandatory before work starts: failures need a human channel.
+    if not (os.environ.get("OPS_SLACK_WEBHOOK_URL", "").strip() or settings.slack_webhook_url):
+        raise RuntimeError(
+            "OPS_SLACK_WEBHOOK_URL or SLACK_WEBHOOK_URL is required for failure alerts"
+        )
+    stage = "dbt-build"
+    try:
+        build_dbt()
+        stage = "roas-query"
+        result = check_roas(target_date)
+        if result.status is RoasStatus.DATA_UNAVAILABLE:
+            stage = "data-quality"
+            raise RuntimeError(f"ROAS data unavailable or invalid for {result.date}")
+    except Exception as pipeline_error:
+        try:
+            send_operational_alert(target_date, stage)
+        except Exception as notification_error:
+            # Preserve both failures; notification problems cannot turn the run green.
+            raise ExceptionGroup(
+                "Pipeline failed and its operational notification also failed",
+                [pipeline_error, notification_error],
+            ) from None
+        raise
 
     if result.status is RoasStatus.BELOW_THRESHOLD:
         logger.warning(
-            "ROAS %.2f on %s is below threshold %.2f -- sending Slack alert.",
+            "ROAS %.2f on %s is below %.2f; checking alert delivery.",
             result.roas,
             result.date,
             result.threshold,
         )
-        webhook_url = validate_slack_webhook_url()
-        send_roas_alert(webhook_url, result)
-    elif result.status is RoasStatus.DATA_UNAVAILABLE:
-        logger.warning(
-            "ROAS unavailable for %s -- treating as a data-quality issue, not a "
-            "performance alert. No Slack message sent.",
-            result.date,
-        )
+        send_roas_alert(result)
+    elif result.status is RoasStatus.NO_SPEND:
+        logger.info("No ad spend on %s; ROAS is undefined and no alert is needed.", result.date)
     else:
-        logger.info(
-            "ROAS %.2f on %s is at/above threshold %.2f -- no alert needed.",
-            result.roas,
-            result.date,
-            result.threshold,
-        )
-
+        logger.info("ROAS %.2f on %s is at/above %.2f.", result.roas, result.date, result.threshold)
     return result
 
 
 if __name__ == "__main__":
-    check_roas_and_alert_flow()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--date", type=date.fromisoformat, help="Reporting date for a manual rerun")
+    check_roas_and_alert_flow(target_date=parser.parse_args().date)

@@ -1,11 +1,11 @@
 from datetime import date
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
 
 from orchestration.roas_check import RoasCheckResult, RoasStatus
-from orchestration.slack import build_slack_payload, send_slack_alert
+from orchestration.slack import SlackDeliveryError, build_slack_payload, send_slack_alert
 
 RESULT = RoasCheckResult(
     date=date(2026, 9, 9),
@@ -28,30 +28,64 @@ def test_slack_payload_contains_expected_context_fields():
     assert "1,000.00" in text  # ad spend
 
 
-@patch("orchestration.slack.httpx.post")
-def test_send_slack_alert_posts_payload_to_webhook_url(mock_post):
-    mock_post.return_value = MagicMock(status_code=200, raise_for_status=MagicMock())
+@pytest.fixture
+def send(tmp_path):
+    def deliver(url="https://hooks.slack.com/services/fake"):
+        return send_slack_alert(
+            url, {"text": "hi"}, delivery_key="test", state_path=tmp_path / "alerts.sqlite3"
+        )
 
-    send_slack_alert("https://hooks.slack.com/services/fake", {"text": "hi"})
-
-    mock_post.assert_called_once()
-    args, kwargs = mock_post.call_args
-    assert args[0] == "https://hooks.slack.com/services/fake"
-    assert kwargs["json"] == {"text": "hi"}
+    return deliver
 
 
-@patch("orchestration.slack.httpx.post")
-def test_send_slack_alert_raises_on_webhook_error(mock_post):
-    response = MagicMock(status_code=500)
-    response.raise_for_status.side_effect = httpx.HTTPStatusError(
-        "server error", request=MagicMock(), response=response
-    )
-    mock_post.return_value = response
-
-    with pytest.raises(httpx.HTTPStatusError):
-        send_slack_alert("https://hooks.slack.com/services/fake", {"text": "hi"})
+def test_send_posts_payload_and_timeout(send):
+    with patch(
+        "orchestration.slack.httpx.post", return_value=httpx.Response(200, text="ok")
+    ) as post:
+        send()
+    assert post.call_args.kwargs["json"] == {"text": "hi"}
+    assert post.call_args.kwargs["timeout"] == 10
 
 
-def test_send_slack_alert_requires_webhook_url():
-    with pytest.raises(RuntimeError):
-        send_slack_alert("", {"text": "hi"})
+def test_missing_webhook_does_not_reserve_delivery(send):
+    with pytest.raises(RuntimeError, match="configured"):
+        send("")
+    with patch(
+        "orchestration.slack.httpx.post", return_value=httpx.Response(200, text="ok")
+    ) as post:
+        send()
+    post.assert_called_once()
+
+
+@pytest.mark.parametrize("status", [400, 403, 429])
+def test_explicit_rejections_allow_later_manual_rerun(send, status):
+    with patch("orchestration.slack.httpx.post", return_value=httpx.Response(status)):
+        with pytest.raises(SlackDeliveryError, match=f"HTTP {status}") as error:
+            send()
+    assert "hooks.slack.com" not in str(error.value)
+    with patch(
+        "orchestration.slack.httpx.post", return_value=httpx.Response(200, text="ok")
+    ) as post:
+        send()
+    post.assert_called_once()
+
+
+@pytest.mark.parametrize("response", [httpx.Response(500), httpx.Response(200, text="unexpected")])
+def test_unconfirmed_response_blocks_resend(send, response):
+    from orchestration.delivery import DeliveryUncertain
+
+    with patch("orchestration.slack.httpx.post", return_value=response) as post:
+        with pytest.raises(SlackDeliveryError, match="uncertain"):
+            send()
+        with pytest.raises(DeliveryUncertain):
+            send()
+    post.assert_called_once()
+
+
+def test_connection_failure_before_sending_allows_later_rerun(send):
+    with patch("orchestration.slack.httpx.post", side_effect=httpx.ConnectError("secret-url")):
+        with pytest.raises(SlackDeliveryError) as error:
+            send()
+    assert "secret-url" not in str(error.value)
+    with patch("orchestration.slack.httpx.post", return_value=httpx.Response(200, text="ok")):
+        assert send()

@@ -1,13 +1,8 @@
-"""Query yesterday's fct_marketing_performance row and classify it against the
-ROAS alert threshold.
-
-The classification logic (evaluate_roas) is pure and independent of BigQuery so
-it can be unit tested directly against the three cases the business cares
-about: below threshold, at/above threshold, and unavailable.
-"""
+"""Fetch one daily mart row and classify performance separately from data availability."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date as date_cls
 from enum import Enum
@@ -20,6 +15,7 @@ class RoasStatus(str, Enum):
     BELOW_THRESHOLD = "below_threshold"
     OK = "ok"
     DATA_UNAVAILABLE = "data_unavailable"
+    NO_SPEND = "no_spend"
 
 
 @dataclass(frozen=True)
@@ -37,28 +33,29 @@ def evaluate_roas(
 ) -> RoasCheckResult:
     """Classify a fct_marketing_performance row against the ROAS threshold.
 
-    A missing row and a row with a null roas are both DATA_UNAVAILABLE --
-    treated as a data-quality problem, never as a (misleadingly) low ROAS.
+    Missing or invalid metrics are DATA_UNAVAILABLE. A known zero-spend day
+    has undefined ROAS and is NO_SPEND, not a data-quality failure.
     """
-    if row is None or row.get("roas") is None:
-        revenue = row.get("revenue") if row else None
-        ad_spend = row.get("ad_spend") if row else None
-        return RoasCheckResult(
-            date=target_date,
-            roas=None,
-            revenue=revenue,
-            ad_spend=ad_spend,
-            threshold=threshold,
-            status=RoasStatus.DATA_UNAVAILABLE,
-        )
-
-    roas = row["roas"]
-    status = RoasStatus.BELOW_THRESHOLD if roas < threshold else RoasStatus.OK
+    if not math.isfinite(threshold) or threshold < 0:
+        raise ValueError("threshold must be finite and non-negative")
+    row = row or {}
+    roas, revenue, ad_spend = (row.get(key) for key in ("roas", "revenue", "ad_spend"))
+    valid_inputs = all(
+        value is not None and math.isfinite(value) and value >= 0 for value in (revenue, ad_spend)
+    )
+    if row.get("date") != target_date or not valid_inputs:
+        status = RoasStatus.DATA_UNAVAILABLE
+    elif ad_spend == 0 and roas is None:
+        status = RoasStatus.NO_SPEND
+    elif roas is None or not math.isfinite(roas) or roas < 0 or ad_spend == 0:
+        status = RoasStatus.DATA_UNAVAILABLE
+    else:
+        status = RoasStatus.BELOW_THRESHOLD if roas < threshold else RoasStatus.OK
     return RoasCheckResult(
         date=target_date,
-        roas=roas,
-        revenue=row.get("revenue"),
-        ad_spend=row.get("ad_spend"),
+        roas=float(roas) if status in (RoasStatus.OK, RoasStatus.BELOW_THRESHOLD) else None,
+        revenue=float(revenue) if revenue is not None else None,
+        ad_spend=float(ad_spend) if ad_spend is not None else None,
         threshold=threshold,
         status=status,
     )
@@ -77,11 +74,11 @@ def fetch_fct_marketing_performance_row(
         where date = @target_date
     """
     job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("target_date", "DATE", target_date)
-        ]
+        query_parameters=[bigquery.ScalarQueryParameter("target_date", "DATE", target_date)]
     )
-    rows = list(client.query(query, job_config=job_config).result())
+    rows = list(client.query(query, job_config=job_config).result(timeout=120))
     if not rows:
         return None
+    if len(rows) != 1:
+        raise ValueError("Expected one marketing performance row per date")
     return dict(rows[0].items())

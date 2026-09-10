@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 
+from orchestration.delivery import finish, reserve
 from orchestration.roas_check import RoasCheckResult
+
+
+class SlackDeliveryError(RuntimeError):
+    """Delivery error without the secret webhook URL in its message."""
 
 
 def build_slack_payload(result: RoasCheckResult) -> dict:
@@ -26,9 +33,40 @@ def build_slack_payload(result: RoasCheckResult) -> dict:
     return {"text": text}
 
 
-def send_slack_alert(webhook_url: str, payload: dict, timeout: float = 10.0) -> None:
-    if not webhook_url:
-        raise RuntimeError("SLACK_WEBHOOK_URL is not set -- cannot send ROAS alert.")
+def send_slack_alert(
+    webhook_url: str,
+    payload: dict,
+    *,
+    delivery_key: str,
+    state_path: Path,
+    timeout: float = 10.0,
+) -> bool:
+    """Send once per durable key; ambiguous outcomes require operator reconciliation.
 
-    response = httpx.post(webhook_url, json=payload, timeout=timeout)
-    response.raise_for_status()
+    Return False for an already acknowledged delivery. No automatic HTTP retries.
+    """
+    if not webhook_url:
+        raise RuntimeError("Slack webhook is not configured; cannot send alert")
+    if not reserve(state_path, delivery_key):
+        return False
+    try:
+        response = httpx.post(webhook_url, json=payload, timeout=timeout)
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+        finish(state_path, delivery_key, "failed")
+        raise SlackDeliveryError("Slack connection failed before sending") from None
+    except httpx.RequestError:
+        finish(state_path, delivery_key, "uncertain")
+        raise SlackDeliveryError(
+            "Slack delivery outcome uncertain; reconcile before resending"
+        ) from None
+    # Only Slack's explicit acknowledgement establishes delivery. A 5xx or an
+    # unexpected response can follow a committed side effect, so do not resend.
+    if response.status_code == 200 and response.text.strip() == "ok":
+        finish(state_path, delivery_key, "sent")
+        return True
+    rejected = response.status_code in (400, 403, 404, 410, 429)
+    finish(state_path, delivery_key, "failed" if rejected else "uncertain")
+    raise SlackDeliveryError(
+        f"Slack delivery failed (HTTP {response.status_code}); "
+        + ("request rejected" if rejected else "outcome uncertain; reconcile before resending"),
+    )
