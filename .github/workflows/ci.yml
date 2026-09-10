@@ -1,0 +1,28 @@
+name: Validate case study
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+      PREFECT_HOME: /tmp/mellow-noir-prefect
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.11.18"
+          enable-cache: true
+      - run: uv sync --locked --python 3.11
+      - run: uv run ruff check orchestration tests
+      - run: uv run ruff format --check orchestration tests
+      - run: uv run pytest -q
+      - run: uv run dbt parse --profiles-dir . --no-partial-parse

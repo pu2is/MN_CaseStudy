@@ -8,6 +8,13 @@ wheels/
 
 # Virtual environments
 .venv
+.venv-*/
+.cache/
+.pytest_cache/
+.ruff_cache/
+tmp/
+.state/
+docs/*
 
 # dbt
 target/
