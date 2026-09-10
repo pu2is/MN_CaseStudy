@@ -29,6 +29,30 @@ uv run dbt parse
 export DBT_PROFILES_DIR=.
 ```
 
+## Running the ROAS alert flow
+
+```bash
+uv run python -m orchestration.flow
+```
+
+This runs `run_dbt` -> `run_dbt_tests` -> `check_yesterday_roas` -> `send_slack_alert`
+(ingestion is assumed to have already completed and is out of scope here). A Slack
+message is only sent when yesterday's ROAS is below the alert threshold; a missing or
+null ROAS is treated as a data-quality issue, not a low-ROAS alert, and stays silent.
+
+Additional environment variables beyond the BigQuery ones above:
+
+- `SLACK_WEBHOOK_URL` — required only when an alert actually fires.
+- `ROAS_ALERT_THRESHOLD` — defaults to `1.5`.
+- `BIGQUERY_MARTS_DATASET` — defaults to `<BIGQUERY_DATASET>_marts`, matching dbt's
+  default schema naming for the `marts` custom schema.
+
+Run the automated tests (BigQuery and the Slack webhook call are both mocked) with:
+
+```bash
+uv run pytest
+```
+
 ## Credentials
 
 No secrets are committed to this repo. `profiles.yml` reads connection details from
