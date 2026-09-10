@@ -2,55 +2,16 @@
 
 ## 1.1 Architektur
 
-```text
-Shopify API             Meta Marketing API
-     |                         |
-     +-----------+-------------+
-                 |
-                 v
-                dlt
-                 |
-                 v
-          BigQuery Raw
-                 |
-                 v
-               dbt
-                 |
-                 v
-        Staging Models
-                 |
-                 v
-      Intermediate Models
-                 |
-                 v
-        Marketing Mart
-                 |
-                 v
-  fct_marketing_performance
-          |             |
-          v             v
-       Reporting    Slack Alert
-```
+Die vollständige Architektur ist in `01_Architekturdiagramm.drawio` dargestellt.
 
-Die Laufzeitumgebung ist von der Datenhaltung getrennt.
+Die Daten werden aus Shopify und der Meta Marketing API über dlt nach BigQuery geladen. Die Transformation erfolgt anschließend mit dbt. Dabei werden die Rohdaten zunächst in Staging-Modelle überführt und danach in wiederverwendbare Zwischenmodelle sowie das Marketing-Mart überführt. Das zentrale Ergebnis ist `fct_marketing_performance`, das für Reporting und nachgelagerte Automatisierungen genutzt wird.
 
-```text
-Hetzner Cloud
-      |
- Docker Compose
-      |
-      +--> Prefect Server
-      +--> PostgreSQL
-      +--> Prefect Worker
-                 |
-                 +--> dlt
-                 +--> dbt
-                 +--> Python Alert Task
-```
+Die Orchestrierung läuft mit Prefect auf einer Hetzner Cloud VM. Prefect Server, Worker und PostgreSQL werden über Docker Compose betrieben. Der Worker führt die dlt-, dbt- und Python-Tasks aus, während Speicherung und SQL-Verarbeitung in BigQuery stattfinden.
 
-Der Prefect Worker führt die Pipeline-Tasks aus. Speicherung und SQL-Verarbeitung liegen in BigQuery. Der Hetzner-Server übernimmt deshalb keine datenintensiven Transformationen.
+Dadurch bleibt die selbst gehostete Infrastruktur klein. Rechenintensive Datenverarbeitung wird nicht auf dem Hetzner-Server ausgeführt.
 
-Eine spätere LLM-Analyse würde zwischen dem validierten Marketing-Modell und der Benachrichtigung liegen. Die Berechnung von CAC und ROAS bleibt deterministisch.
+Eine spätere LLM-Analyse kann auf den bereits validierten Marketing-Daten aufbauen und vor dem Slack Alert zusätzliche Erklärungen erzeugen. Die Berechnung der Kennzahlen selbst bleibt deterministisch in SQL beziehungsweise Python.
+
 
 ## 1.2 Tech Stack
 
