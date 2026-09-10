@@ -1,12 +1,7 @@
 version: 2
-
 models:
   - name: int_meta_daily
-    description: >
-      One row per calendar date, aggregating Meta ad insights across all
-      campaigns. Rows flagged with an invalid negative value (spend,
-      impressions, or clicks) are excluded entirely from all three sums, since
-      a bad measurement on one field puts the whole reported row in question.
+    description: One row per date, summing spend, impressions and clicks across validated campaigns.
     columns:
       - name: date
         description: Reporting date. Grain of this model.

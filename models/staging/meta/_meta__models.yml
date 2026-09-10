@@ -1,28 +1,16 @@
 version: 2
-
 models:
   - name: stg_meta_insights
-    description: >
-      One row per date and campaign_id. Normalizes types, drops rows that
-      cannot be dated or attributed to a campaign, deduplicates on
-      (date, campaign_id), and flags (without changing or dropping) rows with
-      negative spend/impressions/clicks. Contains no CAC/ROAS or other
-      cross-source business logic -- see marts/marketing for that.
+    description: One row per campaign and date after type normalization and exact deduplication.
+      Conflicting snapshots and invalid required values fail dbt build.
     data_tests:
       - unique:
-          column_name: "concat(cast(date as string), '-', campaign_id)"
+          arguments:
+            column_name: concat(cast(date as string), '-', campaign_id)
     columns:
       - name: date
-        description: >
-          Reporting date, as sent by the source. Part of this model's grain.
-          Assumed to already be a calendar date in the shared reporting
-          timezone (the `reporting_timezone` dbt var -- see
-          dbt_project.yml and orchestration/settings.py's
-          REPORTING_TIMEZONE), i.e. that the Meta ad account's own timezone
-          setting matches it. If the real ad account is ever configured with
-          a different timezone, its dates must be normalized to
-          reporting_timezone before joining with Shopify's order_date (see
-          stg_shopify_orders.order_date) at a daily grain.
+        description: Date in the Meta ad account timezone, which must match REPORTING_TIMEZONE. Daily
+          aggregates alone cannot be converted to another timezone.
         data_tests:
           - not_null
       - name: campaign_id
@@ -30,38 +18,17 @@ models:
         data_tests:
           - not_null
       - name: spend
-        description: >
-          Ad spend in EUR, as sent by the source (including negative values,
-          if any). Zero is a valid value (e.g. a paused campaign). Negative
-          spend has no legitimate business meaning, but it's a recoverable
-          source anomaly: has_invalid_negative_value already flags the row for
-          exclusion from aggregation (see int_meta_daily), so it's warned on
-          rather than erroring -- a single bad historical row must not block
-          the daily pipeline from reaching check_yesterday_roas.
-        data_tests:
-          - non_negative:
-              config:
-                severity: warn
-      - name: impressions
-        description: >
-          Ad impressions, as sent by the source. Zero is a valid value.
-          Negative values are warned on, not errored on, for the same reason
-          as spend -- see that column's description.
-        data_tests:
-          - non_negative:
-              config:
-                severity: warn
-      - name: clicks
-        description: >
-          Ad clicks, as sent by the source. Zero is a valid value. Negative
-          values are warned on, not errored on, for the same reason as spend
-          -- see that column's description.
-        data_tests:
-          - non_negative:
-              config:
-                severity: warn
-      - name: has_invalid_negative_value
-        description: >
-          True when spend, impressions, or clicks is a negative number.
+        description: Campaign spend in EUR. Must be known and non-negative; zero is valid.
         data_tests:
           - not_null
+          - non_negative
+      - name: impressions
+        description: Daily campaign impression count. Must be known and non-negative; zero is valid.
+        data_tests:
+          - not_null
+          - non_negative
+      - name: clicks
+        description: Daily campaign click count. Must be known and non-negative; zero is valid.
+        data_tests:
+          - not_null
+          - non_negative

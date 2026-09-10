@@ -1,14 +1,8 @@
 version: 2
-
 models:
   - name: stg_shopify_orders
-    description: >
-      One row per Shopify order. Normalizes types and timestamps, extracts a
-      calendar order_date, blanks out empty strings, drops rows that cannot be
-      identified or dated, deduplicates by order_id, and flags (without
-      changing or dropping) orders with a negative total_price. Contains no
-      CAC/ROAS or other cross-source business logic -- see marts/marketing for
-      that.
+    description: One row per order after type normalization and exact deduplication. Conflicting
+      order versions, missing required values and negative amounts fail dbt build.
     columns:
       - name: order_id
         description: Shopify order identifier. Grain of this model.
@@ -16,37 +10,22 @@ models:
           - unique
           - not_null
       - name: customer_id
-        description: >
-          Shopify customer identifier. Null for guest/anonymous checkouts or
-          when missing from the source.
+        description: Shopify customer identifier. Null for guest/anonymous checkouts or when missing
+          from the source.
       - name: created_at
         description: Order creation timestamp, assumed to already be UTC.
         data_tests:
           - not_null
       - name: order_date
-        description: >
-          Calendar date of created_at, converted using the `reporting_timezone`
-          dbt var (see dbt_project.yml and orchestration/settings.py's
-          REPORTING_TIMEZONE), not implicit UTC. This is the same policy
-          assumed for Meta's reporting date -- see stg_meta_insights.date --
-          so the two only align if the real Meta ad account is normalized to
-          this timezone.
+        description: Order timestamp converted to REPORTING_TIMEZONE (default Europe/Berlin); Meta
+          must use the same reporting calendar.
         data_tests:
           - not_null
       - name: total_price
-        description: >
-          Order value, as sent by the source (including negative values, if
-          any) -- see total_price_is_invalid to identify those. Negative
-          values are warned on, not errored on, since a refund/adjustment
-          could plausibly produce one; that's a business event, not
-          necessarily a data quality bug.
-        data_tests:
-          - non_negative:
-              config:
-                severity: warn
-      - name: total_price_is_invalid
-        description: True when total_price is a negative number.
+        description: Gross order value in EUR (assumed store currency). Must be known and non-negative.
+          Refunds require a separate source; see docs/data_contract.md.
         data_tests:
           - not_null
+          - non_negative
       - name: discount_code
         description: Discount code applied to the order. Null when absent or blank.

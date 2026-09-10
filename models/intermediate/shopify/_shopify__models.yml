@@ -1,13 +1,10 @@
 version: 2
-
 models:
   - name: int_customer_first_order
-    description: >
-      One row per customer, with the calendar date of their first known
-      order. Used to derive new_customers in int_shopify_daily. Assumes the
-      available Shopify order history is complete enough to contain each
-      customer's actual first order -- see the model's SQL for the caveat if
-      that assumption doesn't hold.
+    description: One row per customer, with the calendar date of their first known order. Used to
+      derive new_customers in int_shopify_daily. Assumes the available Shopify order history is complete
+      enough to contain each customer's actual first order -- see the model's SQL for the caveat
+      if that assumption doesn't hold.
     columns:
       - name: customer_id
         description: Shopify customer identifier. Grain of this model.
@@ -18,13 +15,9 @@ models:
         description: Calendar date of the customer's earliest known order.
         data_tests:
           - not_null
-
   - name: int_shopify_daily
-    description: >
-      One row per calendar date, aggregating Shopify orders into daily
-      revenue, order count, and new-customer count. Orders flagged as having
-      an invalid (negative) total_price are excluded from revenue but still
-      counted as orders.
+    description: One row per date, aggregating validated orders into revenue, order count and distinct
+      first-time customers.
     columns:
       - name: date
         description: Calendar date. Grain of this model.
@@ -32,18 +25,15 @@ models:
           - unique
           - not_null
       - name: revenue
-        description: >
-          Sum of total_price for orders placed on this date, excluding orders
-          flagged with an invalid (negative) total_price.
+        description: Sum of gross order values in EUR on this date.
         data_tests:
           - not_null
       - name: orders
-        description: Count of orders placed on this date, regardless of total_price validity.
+        description: Count of validated orders placed on this date.
         data_tests:
           - not_null
       - name: new_customers
-        description: >
-          Count of distinct customers whose first known order (see
-          int_customer_first_order) falls on this date.
+        description: Count of distinct customers whose first known order (see int_customer_first_order)
+          falls on this date.
         data_tests:
           - not_null
